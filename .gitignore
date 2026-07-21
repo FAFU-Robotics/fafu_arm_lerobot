@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+htmlcov/
+.coverage
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# LeRobot runtime artifacts
+outputs/
+data/
+datasets/
+checkpoints/
+wandb/
+*.safetensors
+*.pt
+*.pth
+
+# Local reference checkouts used during development
+.reference_*/

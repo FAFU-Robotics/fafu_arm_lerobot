@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_robot_fafu_arm"
+version = "0.1.0"
+description = "LeRobot integration for the FAFU 6-DoF arm"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "FAFU Robotics" }]
+keywords = ["lerobot", "robotics", "fafu", "trac-ik", "imitation-learning"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "lerobot>=0.4.3,<0.7",
+  "numpy>=1.24",
+  "pytracik>=0.0.3,<0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+fafu-arm-check = "lerobot_robot_fafu_arm.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/FAFU-Robotics/fafu_arm_lerobot"
+Repository = "https://github.com/FAFU-Robotics/fafu_arm_lerobot"
+Issues = "https://github.com/FAFU-Robotics/fafu_arm_lerobot/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lerobot_robot_fafu_arm = ["resources/*.urdf", "resources/*.cfg"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 110
+exclude = ["third_party"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/lerobot_robot_fafu_arm/__init__.py" = ["E402", "F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

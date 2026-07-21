@@ -1,0 +1,4 @@
+[submodule "third_party/fafu_arm_sdk"]
+	path = third_party/fafu_arm_sdk
+	url = https://github.com/FAFU-Robotics/fafu_arm_sdk.git
+	branch = main
