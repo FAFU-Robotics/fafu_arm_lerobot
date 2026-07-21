@@ -12,6 +12,7 @@ LeRobot 设备接口均由本项目直接维护。
 - 动作支持关节角、绝对 EE 位姿、EE 增量和同步归档四种模式。
 - 默认观测同时保留关节位置/速度、绝对 EE 位姿和相邻帧 EE 增量。
 - `FafuArmKinematics`：使用 [pytracik](https://pypi.org/project/pytracik/) 完成 FK/IK。
+- `fafu-arm-train`：ACT 数据预检、隐私安全的训练命令和官方 LeRobot 训练入口。
 - LeRobot 0.4.3–0.6.x 第三方插件自动发现，无需修改 `lerobot` 包。
 - Windows 和 Ubuntu SDK 构建流程、离线软件检查、无动作硬件连通检查。
 
@@ -227,7 +228,17 @@ lerobot-rollout \
 上面是 LeRobot 0.6 的只运行策略示例。需要保存 rollout 时应再次明确设置本地数据目录、
 `--dataset.push_to_hub=false`，或在确实发布时使用 `--dataset.private=true`。
 
-LeRobot 的训练命令与其他机器人相同；本插件只负责硬件输入输出。
+### ACT 训练
+
+先检查本地数据并打印经过验证的官方 LeRobot ACT 命令；确认后在同一命令末尾增加 `--run`：
+
+```bash
+fafu-arm-train act --dataset-root ./datasets/fafu_demo --dataset-repo-id FAFU-Robotics/fafu_demo --action-mode joint --output-dir ./outputs/train/act_fafu_joint --device cuda
+```
+
+入口支持 `joint`、`ee_delta` 和 `ee_pose` 三种独立 action schema，默认不上传模型、不启用 W&B。
+动作表示建议、快速训练、调参、断点续训、真机评估和修改 ACT 的方法集中在
+[Policy Training 指南](docs/TRAINING.md)。
 
 ## FK / IK
 

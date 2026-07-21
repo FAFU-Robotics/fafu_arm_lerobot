@@ -4,7 +4,7 @@
 本地录制、数据保存、读取、可视化、WRS 轨迹检查、续录、发布和安全回放。安装和 SDK 编译见
 [部署指南](DEPLOYMENT.md)，运动学尺寸和 TCP 见 [URDF 与 TCP](URDF.md)。
 
-本文命令以 LeRobot 0.6 为主。项目同时兼容 LeRobot 0.4.3–0.6.x；不同版本先运行相应命令的
+训练数据准备完成后转到 [Policy Training 指南](TRAINING.md)。本文命令以 LeRobot 0.6 为主。项目同时兼容 LeRobot 0.4.3–0.6.x；不同版本先运行相应命令的
 `--help`，确认参数名后再连接真机。
 
 ## 1. 数据流和推荐选择
