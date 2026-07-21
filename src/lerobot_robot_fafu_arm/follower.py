@@ -214,9 +214,12 @@ class FafuFollower(Robot):
 
     def send_action(self, action: dict[str, Any]) -> dict[str, float]:
         controller = self._require_controller()
+        validated_action = self._validate_action(action)
         current_joints = np.asarray(controller.get_joint_values(), dtype=np.float64)
         if current_joints.shape != (len(JOINT_NAMES),):
             raise RuntimeError(f"SDK returned {current_joints.size} joints; expected {len(JOINT_NAMES)}")
+        if not np.all(np.isfinite(current_joints)):
+            raise RuntimeError("SDK returned non-finite joint positions")
         current_pose = None if self.config.action_mode == "joint" else self.kinematics.forward(current_joints)
         control_mode = (
             self.config.all_control_source if self.config.action_mode == "all" else self.config.action_mode
@@ -226,19 +229,46 @@ class FafuFollower(Robot):
             target_joints = self._last_joint_goal.copy()
             for index, name in enumerate(JOINT_NAMES):
                 key = f"{name}.pos"
-                if key in action:
-                    target_joints[index] = self._finite_scalar(action[key], key)
+                if key in validated_action:
+                    target_joints[index] = validated_action[key]
         else:
             if current_pose is None:
                 raise RuntimeError("Cartesian action mode requires a current EE pose")
             target_joints = self._cartesian_joint_target(
-                action,
+                validated_action,
                 control_mode=control_mode,
                 current_joints=current_joints,
                 current_pose=current_pose,
             )
 
         target_joints = self._limit_joint_action(target_joints, current_joints)
+
+        # Validate and limit every actuator target before sending anything. Hardware
+        # writes cannot be transactional, but malformed gripper input must not allow
+        # the arm command to be sent first.
+        gripper_key = "gripper.pos"
+        should_send_gripper = gripper_key in validated_action
+        gripper_goal = float(self._last_gripper_goal)
+        if should_send_gripper:
+            current_gripper = self._read_gripper_angle()
+            gripper_goal = self._limit_relative("gripper", validated_action[gripper_key], current_gripper)
+            gripper_goal = float(
+                np.clip(gripper_goal, self.config.gripper_min_rad, self.config.gripper_max_rad)
+            )
+
+        if self.config.action_mode == "joint":
+            sent_action = joint_action(target_joints, gripper_goal)
+        else:
+            if current_pose is None:
+                raise RuntimeError("Cartesian action mode requires a current EE pose")
+            actual_pose = self.kinematics.forward(target_joints)
+            sent_action = self._format_sent_action(
+                target_joints,
+                current_pose=current_pose,
+                actual_pose=actual_pose,
+                gripper=gripper_goal,
+            )
+
         if self.config.use_servo:
             if not controller.servo_j(target_joints):
                 reason = getattr(controller, "servo_aborted_reason", None)
@@ -253,14 +283,7 @@ class FafuFollower(Robot):
             )
         self._last_joint_goal = target_joints
 
-        gripper_key = "gripper.pos"
-        if gripper_key in action:
-            current_gripper = self._read_gripper_angle()
-            gripper_goal = self._finite_scalar(action[gripper_key], gripper_key)
-            gripper_goal = self._limit_relative("gripper", gripper_goal, current_gripper)
-            gripper_goal = float(
-                np.clip(gripper_goal, self.config.gripper_min_rad, self.config.gripper_max_rad)
-            )
+        if should_send_gripper:
             controller.gripper_control(
                 angle=gripper_goal,
                 effort=self.config.gripper_effort,
@@ -269,16 +292,13 @@ class FafuFollower(Robot):
             )
             self._last_gripper_goal = gripper_goal
 
-        if self.config.action_mode == "joint":
-            return joint_action(target_joints, self._last_gripper_goal)
-        if current_pose is None:
-            raise RuntimeError("Cartesian action mode requires a current EE pose")
-        actual_pose = self.kinematics.forward(target_joints)
-        return self._format_sent_action(
-            target_joints,
-            current_pose=current_pose,
-            actual_pose=actual_pose,
-        )
+        if self.config.write_sent_action_back:
+            # LeRobot 0.4-0.6 default recording pipelines retain the input dict.
+            # Updating it in place makes the recorder persist the safety-limited
+            # command instead of the raw leader request.
+            action.clear()
+            action.update(sent_action)
+        return sent_action
 
     def disconnect(self) -> None:
         if self._controller is None:
@@ -360,18 +380,29 @@ class FafuFollower(Robot):
         return np.asarray(solution, dtype=np.float64)
 
     def _limit_cartesian_target(self, target: Pose, current: Pose) -> Pose:
+        workspace_min = self.config.ee_workspace_min
+        workspace_max = self.config.ee_workspace_max
+        if workspace_min is not None and workspace_max is not None:
+            minimum = np.asarray(workspace_min, dtype=np.float64)
+            maximum = np.asarray(workspace_max, dtype=np.float64)
+            if np.any(current.position < minimum) or np.any(current.position > maximum):
+                raise RuntimeError(
+                    "Current EE position is outside the configured workspace; "
+                    "no motion command was sent. Recover manually or widen the validated workspace."
+                )
+            target = Pose(
+                position=np.clip(target.position, minimum, maximum),
+                rotation=target.rotation,
+            )
+
         translation, rotation = pose_delta(current, target)
         translation = limit_vector_norm(translation, self.config.max_ee_translation_step_m)
         rotation = limit_vector_norm(rotation, self.config.max_ee_rotation_step_rad)
         limited = apply_pose_delta(current, translation, rotation)
 
-        if self.config.ee_workspace_min is not None and self.config.ee_workspace_max is not None:
+        if workspace_min is not None and workspace_max is not None:
             limited = Pose(
-                position=np.clip(
-                    limited.position,
-                    self.config.ee_workspace_min,
-                    self.config.ee_workspace_max,
-                ),
+                position=np.clip(limited.position, minimum, maximum),
                 rotation=limited.rotation,
             )
         return limited
@@ -382,9 +413,10 @@ class FafuFollower(Robot):
         *,
         current_pose: Pose,
         actual_pose: Pose,
+        gripper: float | None = None,
     ) -> dict[str, float]:
         mode = self.config.action_mode
-        gripper = float(self._last_gripper_goal)
+        gripper = float(self._last_gripper_goal if gripper is None else gripper)
         sent: dict[str, float] = {}
         if mode in {"joint", "all"}:
             sent.update(joint_action(joints, gripper))
@@ -394,6 +426,23 @@ class FafuFollower(Robot):
             translation, rotation = pose_delta(current_pose, actual_pose)
             sent.update(delta_action(translation, rotation, gripper))
         return sent
+
+    def _validate_action(self, action: dict[str, Any]) -> dict[str, float]:
+        if not isinstance(action, dict):
+            raise TypeError(f"action must be a dict, got {type(action).__name__}")
+
+        expected = set(self.action_features)
+        provided = set(action)
+        unexpected = provided - expected
+        missing = expected - provided
+        if unexpected:
+            names = ", ".join(sorted(str(name) for name in unexpected))
+            raise ValueError(f"Unexpected action fields for mode {self.config.action_mode}: {names}")
+        if self.config.strict_action_features and missing:
+            names = ", ".join(sorted(missing))
+            raise ValueError(f"Missing action fields for mode {self.config.action_mode}: {names}")
+
+        return {name: self._finite_scalar(value, name) for name, value in action.items()}
 
     def _limit_joint_action(self, target: np.ndarray, current: np.ndarray) -> np.ndarray:
         limited = target.copy()

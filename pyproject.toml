@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerobot_robot_fafu_arm"
-version = "0.2.0"
+version = "0.3.0"
 description = "LeRobot integration for the FAFU 6-DoF arm"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,6 +38,7 @@ dev = [
 
 [project.scripts]
 fafu-arm-check = "lerobot_robot_fafu_arm.cli:main"
+fafu-arm-dataset-check = "lerobot_robot_fafu_arm.dataset_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/FAFU-Robotics/fafu_arm_lerobot"
@@ -53,6 +54,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 lerobot_robot_fafu_arm = ["resources/*.urdf", "resources/*.cfg"]
+
+[tool.setuptools.data-files]
+"share/doc/lerobot_robot_fafu_arm" = ["docs/*.md"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"

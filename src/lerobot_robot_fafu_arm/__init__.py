@@ -8,7 +8,7 @@ from .kinematics import (
     rotation_vector_to_matrix,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # LeRobot discovers third-party devices by importing distributions whose name
 # starts with ``lerobot_robot_``. Importing the config modules performs the

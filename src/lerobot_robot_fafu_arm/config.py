@@ -52,6 +52,8 @@ class FafuFollowerConfig(RobotConfig):
     move_speed: int = 50
     max_relative_target: float | dict[str, float] | None = 0.15
     enforce_urdf_limits: bool = True
+    strict_action_features: bool = True
+    write_sent_action_back: bool = True
     gripper_min_rad: float = 0.0
     gripper_max_rad: float = math.radians(105.0)
     gripper_effort: int | None = 300

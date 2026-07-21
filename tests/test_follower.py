@@ -139,6 +139,13 @@ class FakeController:
         self.close_options = kwargs
 
 
+def joint_action_values(*, joint1=0.0, gripper=0.0):
+    action = {f"joint{index}.pos": 0.0 for index in range(1, 7)}
+    action["joint1.pos"] = joint1
+    action["gripper.pos"] = gripper
+    return action
+
+
 def test_follower_clips_and_streams_actions(monkeypatch, tmp_path):
     install_fake_lerobot(monkeypatch)
     config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
@@ -158,11 +165,13 @@ def test_follower_clips_and_streams_actions(monkeypatch, tmp_path):
     )
     robot = follower_module.FafuFollower(config)
     robot.connect()
-    sent = robot.send_action({"joint1.pos": 1.0, "gripper.pos": 1.0})
+    requested = joint_action_values(joint1=1.0, gripper=1.0)
+    sent = robot.send_action(requested)
 
     assert math.isclose(controller.last_servo[0], 0.15)
     assert np.all(controller.last_servo <= 0.5)
     assert math.isclose(sent["joint1.pos"], 0.15)
+    assert requested == sent
     assert controller.last_gripper["block"] is False
 
     robot.disconnect()
@@ -245,6 +254,105 @@ def test_follower_records_joint_and_cartesian_state_together(monkeypatch, tmp_pa
     assert math.isclose(second["ee_delta.x"], 0.02)
     assert set(second) == set(robot.observation_features)
     robot.disconnect()
+
+
+def test_follower_validates_complete_action_before_hardware_write(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+    follower_module = importlib.import_module("lerobot_robot_fafu_arm.follower")
+    monkeypatch.setattr(follower_module, "FafuArmKinematics", FakeKinematics)
+
+    controller = FakeController()
+    bindings = SimpleNamespace(
+        controller_class=lambda **kwargs: controller,
+        servo_options_class=FakeServoOptions,
+    )
+    monkeypatch.setattr(follower_module, "load_sdk", lambda path: bindings)
+
+    config = config_module.FafuFollowerConfig(calibration_dir=tmp_path / "strict_calibration")
+    robot = follower_module.FafuFollower(config)
+    robot.connect()
+
+    invalid = joint_action_values(joint1=0.1, gripper=float("nan"))
+    with np.testing.assert_raises_regex(ValueError, "gripper.pos must be finite"):
+        robot.send_action(invalid)
+    assert controller.last_servo is None
+    assert controller.last_gripper is None
+
+    with np.testing.assert_raises_regex(ValueError, "Missing action fields"):
+        robot.send_action({"joint1.pos": 0.1})
+    assert controller.last_servo is None
+
+    unexpected = joint_action_values()
+    unexpected["debug.target"] = 1.0
+    with np.testing.assert_raises_regex(ValueError, "Unexpected action fields"):
+        robot.send_action(unexpected)
+    assert controller.last_servo is None
+    robot.disconnect()
+
+
+def test_follower_rejects_cartesian_motion_when_current_pose_is_outside_workspace(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+    follower_module = importlib.import_module("lerobot_robot_fafu_arm.follower")
+    monkeypatch.setattr(follower_module, "FafuArmKinematics", FakeKinematics)
+
+    controller = FakeController()
+    controller.joints[0] = 0.4  # Fake FK: current x is 0.6 m.
+    bindings = SimpleNamespace(
+        controller_class=lambda **kwargs: controller,
+        servo_options_class=FakeServoOptions,
+    )
+    monkeypatch.setattr(follower_module, "load_sdk", lambda path: bindings)
+
+    config = config_module.FafuFollowerConfig(
+        calibration_dir=tmp_path / "workspace_calibration",
+        action_mode="ee_pose",
+        ee_workspace_min=(0.1, -0.2, 0.1),
+        ee_workspace_max=(0.5, 0.2, 0.4),
+        max_relative_target=None,
+    )
+    robot = follower_module.FafuFollower(config)
+    robot.connect()
+    action = {
+        "ee.x": 0.45,
+        "ee.y": 0.0,
+        "ee.z": 0.2,
+        "ee.wx": 0.0,
+        "ee.wy": 0.0,
+        "ee.wz": 0.0,
+        "gripper.pos": 0.0,
+    }
+
+    with np.testing.assert_raises_regex(RuntimeError, "outside the configured workspace"):
+        robot.send_action(action)
+    assert controller.last_servo is None
+    assert controller.last_gripper is None
+    robot.disconnect()
+
+
+def test_workspace_projection_preserves_cartesian_step_limit(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+    follower_module = importlib.import_module("lerobot_robot_fafu_arm.follower")
+    monkeypatch.setattr(follower_module, "FafuArmKinematics", FakeKinematics)
+
+    config = config_module.FafuFollowerConfig(
+        calibration_dir=tmp_path / "workspace_step_calibration",
+        action_mode="ee_pose",
+        ee_workspace_min=(0.1, -0.2, 0.1),
+        ee_workspace_max=(0.5, 0.2, 0.4),
+        max_ee_translation_step_m=0.03,
+    )
+    robot = follower_module.FafuFollower(config)
+    current = Pose(position=np.array([0.2, 0.0, 0.2]), rotation=np.eye(3))
+    target = Pose(position=np.array([1.0, 1.0, 0.2]), rotation=np.eye(3))
+
+    limited = robot._limit_cartesian_target(target, current)
+
+    assert np.linalg.norm(limited.position - current.position) <= 0.03 + 1e-12
+    assert np.all(limited.position >= np.asarray(config.ee_workspace_min))
+    assert np.all(limited.position <= np.asarray(config.ee_workspace_max))
 
 
 def test_leader_all_mode_emits_all_action_representations(monkeypatch, tmp_path):

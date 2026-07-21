@@ -11,6 +11,24 @@ FAFU Arm 将“观测状态”和“动作标签”分开配置：
 LeRobot 会在设备字段之外自动保存帧时间戳、帧索引、episode 索引、任务文本/任务索引以及数据集元数据；
 相机开启后还会保存对应的 RGB 或深度流。
 
+## 请求动作与最终下发动作
+
+FAFU follower 默认启用两项数据正确性保护：
+
+- `strict_action_features=true`：每帧必须提供当前 action mode 的全部字段；缺字段、未知字段、
+  NaN 或 Inf 会在任何运动命令发送前使整帧失败。
+- `write_sent_action_back=true`：关节/EE 步长、工作空间、URDF 和夹爪限位完成后，把最终下发值
+  原地写回传入的 action 字典。
+
+LeRobot 0.4.4、0.5.1 和 0.6.0 的默认录制流水线在 teleop 路径中保留这个动作字典，因此写入数据集的
+`action` 会同步变成安全限幅后的命令。这样可以避免策略学习“请求移动 0.2 m、机械臂实际只接受
+0.03 m”一类错误标签。
+
+如果项目自行添加了会创建新字典的 `robot_action_processor`、修改了 LeRobot recorder，或把动作通过
+IPC/网络复制后再调用 `send_action`，则必须做一次“故意触发限幅并读取数据帧”的集成测试，不能依赖
+对象原地写回。这里记录的是适配器传给 SDK 的命令；SDK/固件的二次限位以及机械误差仍应通过下一帧
+实测 observation 判断。
+
 ## 动作模式
 
 `robot.action_mode` 与 `teleop.action_mode` 必须设为相同值。
