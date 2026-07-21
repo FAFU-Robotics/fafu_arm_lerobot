@@ -2,11 +2,10 @@
 <!--
   Kinematic URDF for the FAFU follower arm.
 
-  The six joint transforms and axes are extracted from the WRS PantheraHT
-  manipulator used by robot_panthera_ht/panthera_ht.py and cross-checked
-  against fafu_follower.urdf. The tool offset is 0.175 m along URDF link6 X:
-  WRS gripper coupling 0.005 m + acting-center offset 0.170 m. This replaces
-  the older 0.165 m tool offset.
+  The six joint transforms, axes and limits describe the FAFU arm kinematic
+  chain. The tool offset is 0.175 m along URDF link6 X: the FAFU gripper's
+  0.005 m coupling plus its 0.170 m acting-center offset. This replaces the
+  older 0.165 m tool offset.
 -->
 <robot name="fafu_arm">
   <link name="base_link"/>

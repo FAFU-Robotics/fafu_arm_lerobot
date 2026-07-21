@@ -5,7 +5,7 @@ ROS package URI 或缺失的 STL 文件。
 
 ## 六轴运动学链
 
-关节参数来自 WRS `PantheraHT` manipulator，并与 `fafu_follower.urdf` 核对：
+关节参数来自 FAFU Arm 的机械尺寸与 `fafu_follower.urdf`，由本项目直接维护：
 
 | Joint | Origin xyz (m) | Axis | Limit (rad) |
 |---|---|---|---|
@@ -16,8 +16,8 @@ ROS package URI 或缺失的 STL 文件。
 | joint5 | `0.07 0 0.036319` | `0 0 -1` | `[-1.7, 1.7]` |
 | joint6 | `0.02345 0 -0.039` | `1 0 0` | `[-2.5, 2.5]` |
 
-WRS 中 joint6 使用 `R_y(pi/2)` 的局部 frame 和局部 Z 轴；转换回原始 URDF frame 后等价于
-URDF joint6 的 X 轴，因此 URDF 保留 `axis="1 0 0"`。
+FAFU Arm 的第六轴绕腕部前向轴旋转，因此 URDF 中 joint6 使用 `axis="1 0 0"`。所有 FK/IK
+均以 `base_link -> tool_link` 为同一条运动学链。
 
 ## TCP 更新
 
@@ -27,13 +27,13 @@ URDF joint6 的 X 轴，因此 URDF 保留 `axis="1 0 0"`。
 <origin xyz="0.165 0 0" rpy="0 0 0"/>
 ```
 
-当前 WRS 夹爪模型使用：
+当前 FAFU 夹爪机械尺寸为：
 
 - coupling：沿夹爪局部 Z 轴 0.005 m；
 - acting center：沿夹爪局部 Z 轴 0.170 m；
 - 总计：0.175 m。
 
-WRS flange 的局部 Z 轴映射到 URDF link6 的 X 轴，因此更新后的 fixed joint 为：
+夹爪安装方向沿 URDF link6 的 X 轴，因此更新后的 fixed joint 为：
 
 ```xml
 <joint name="tool_joint" type="fixed">

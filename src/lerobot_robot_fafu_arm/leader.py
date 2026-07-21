@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from functools import cached_property
 from typing import Any
 
 import numpy as np
 from lerobot.teleoperators.teleoperator import Teleoperator
 
-from .config import JOINT_NAMES, FafuLeaderConfig
+from .config import FafuLeaderConfig
+from .kinematics import FafuArmKinematics, Pose
+from .representation import (
+    JOINT_NAMES,
+    action_features,
+    delta_action,
+    joint_action,
+    pose_action,
+    pose_delta,
+)
 from .sdk import default_sdk_config_path, load_sdk
 
 logger = logging.getLogger(__name__)
@@ -26,10 +36,15 @@ class FafuLeader(Teleoperator):
         super().__init__(config)
         self.config = config
         self._controller: Any | None = None
+        self.kinematics: FafuArmKinematics | None = (
+            None if config.action_mode == "joint" else FafuArmKinematics(config.urdf_path)
+        )
+        self._previous_pose: Pose | None = None
+        self._previous_action_time: float | None = None
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{name}.pos": float for name in (*JOINT_NAMES, "gripper")}
+        return action_features(self.config.action_mode)
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -71,6 +86,8 @@ class FafuLeader(Teleoperator):
             controller.close_connection(joint_release="stop", gripper_release="stop")
             raise
         self._controller = controller
+        self._previous_pose = None
+        self._previous_action_time = None
         if calibrate:
             self.calibrate()
         logger.info("%s connected in manual leader mode", self)
@@ -81,8 +98,33 @@ class FafuLeader(Teleoperator):
         if joints.shape != (len(JOINT_NAMES),):
             raise RuntimeError(f"SDK returned {joints.size} joints; expected {len(JOINT_NAMES)}")
 
-        action = {f"{name}.pos": float(joints[index]) for index, name in enumerate(JOINT_NAMES)}
-        action["gripper.pos"] = float(controller.get_gripper_state().position) * math.tau
+        gripper = float(controller.get_gripper_state().position) * math.tau
+        if not math.isfinite(gripper):
+            raise RuntimeError("SDK returned a non-finite gripper position")
+
+        mode = self.config.action_mode
+        action: dict[str, float] = {}
+        if mode in {"joint", "all"}:
+            action.update(joint_action(joints, gripper))
+
+        if mode in {"ee_pose", "ee_delta", "all"}:
+            pose = self._require_kinematics().forward(joints)
+            if mode in {"ee_pose", "all"}:
+                action.update(pose_action(pose, gripper))
+            if mode in {"ee_delta", "all"}:
+                now = time.perf_counter()
+                if (
+                    self._previous_pose is None
+                    or self._previous_action_time is None
+                    or now - self._previous_action_time > self.config.delta_reset_timeout_s
+                ):
+                    translation_delta = np.zeros(3, dtype=np.float64)
+                    rotation_delta = np.zeros(3, dtype=np.float64)
+                else:
+                    translation_delta, rotation_delta = pose_delta(self._previous_pose, pose)
+                action.update(delta_action(translation_delta, rotation_delta, gripper))
+                self._previous_pose = pose
+                self._previous_action_time = now
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
@@ -93,6 +135,8 @@ class FafuLeader(Teleoperator):
         if self._controller is None:
             return
         controller, self._controller = self._controller, None
+        self._previous_pose = None
+        self._previous_action_time = None
         controller.close_connection(
             joint_release=self.config.joint_release,
             gripper_release=self.config.gripper_release,
@@ -103,3 +147,8 @@ class FafuLeader(Teleoperator):
         if self._controller is None:
             raise RuntimeError(f"{self} is not connected")
         return self._controller
+
+    def _require_kinematics(self) -> FafuArmKinematics:
+        if self.kinematics is None:
+            raise RuntimeError("Cartesian action mode requires a kinematics model")
+        return self.kinematics

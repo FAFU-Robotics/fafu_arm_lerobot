@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerobot_robot_fafu_arm"
-version = "0.1.0"
+version = "0.2.0"
 description = "LeRobot integration for the FAFU 6-DoF arm"
 readme = "README.md"
 requires-python = ">=3.10"

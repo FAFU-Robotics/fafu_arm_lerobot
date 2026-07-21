@@ -1,8 +1,14 @@
 """FAFU arm plugin for LeRobot."""
 
-from .kinematics import FafuArmKinematics, Pose, default_urdf_path
+from .kinematics import (
+    FafuArmKinematics,
+    Pose,
+    default_urdf_path,
+    rotation_matrix_to_rotvec,
+    rotation_vector_to_matrix,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # LeRobot discovers third-party devices by importing distributions whose name
 # starts with ``lerobot_robot_``. Importing the config modules performs the
@@ -24,5 +30,7 @@ __all__ = [
     "FafuLeader",
     "FafuLeaderConfig",
     "Pose",
+    "rotation_matrix_to_rotvec",
+    "rotation_vector_to_matrix",
     "default_urdf_path",
 ]

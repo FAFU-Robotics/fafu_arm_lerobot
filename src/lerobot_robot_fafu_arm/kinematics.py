@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,96 @@ def _rotation(values: ArrayLike) -> NDArray[np.float64]:
     ):
         raise ValueError("rotation must be an orthonormal right-handed matrix")
     return result
+
+
+def rotation_vector_to_matrix(values: ArrayLike) -> NDArray[np.float64]:
+    """Convert an axis-angle rotation vector to a 3x3 rotation matrix."""
+
+    vector = _vector(values, 3, "rotation vector")
+    theta = float(np.linalg.norm(vector))
+    skew = np.array(
+        [
+            [0.0, -vector[2], vector[1]],
+            [vector[2], 0.0, -vector[0]],
+            [-vector[1], vector[0], 0.0],
+        ],
+        dtype=np.float64,
+    )
+    if theta < 1e-8:
+        sine_scale = 1.0 - theta**2 / 6.0
+        cosine_scale = 0.5 - theta**2 / 24.0
+    else:
+        sine_scale = math.sin(theta) / theta
+        cosine_scale = (1.0 - math.cos(theta)) / theta**2
+    return np.eye(3, dtype=np.float64) + sine_scale * skew + cosine_scale * (skew @ skew)
+
+
+def rotation_matrix_to_rotvec(values: ArrayLike) -> NDArray[np.float64]:
+    """Convert a 3x3 rotation matrix to the shortest axis-angle vector."""
+
+    rotation = _rotation(values)
+    trace = float(np.trace(rotation))
+
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        quaternion = np.array(
+            [
+                0.25 * scale,
+                (rotation[2, 1] - rotation[1, 2]) / scale,
+                (rotation[0, 2] - rotation[2, 0]) / scale,
+                (rotation[1, 0] - rotation[0, 1]) / scale,
+            ],
+            dtype=np.float64,
+        )
+    else:
+        index = int(np.argmax(np.diag(rotation)))
+        if index == 0:
+            scale = math.sqrt(max(1.0 + rotation[0, 0] - rotation[1, 1] - rotation[2, 2], 0.0)) * 2.0
+            quaternion = np.array(
+                [
+                    (rotation[2, 1] - rotation[1, 2]) / scale,
+                    0.25 * scale,
+                    (rotation[0, 1] + rotation[1, 0]) / scale,
+                    (rotation[0, 2] + rotation[2, 0]) / scale,
+                ],
+                dtype=np.float64,
+            )
+        elif index == 1:
+            scale = math.sqrt(max(1.0 + rotation[1, 1] - rotation[0, 0] - rotation[2, 2], 0.0)) * 2.0
+            quaternion = np.array(
+                [
+                    (rotation[0, 2] - rotation[2, 0]) / scale,
+                    (rotation[0, 1] + rotation[1, 0]) / scale,
+                    0.25 * scale,
+                    (rotation[1, 2] + rotation[2, 1]) / scale,
+                ],
+                dtype=np.float64,
+            )
+        else:
+            scale = math.sqrt(max(1.0 + rotation[2, 2] - rotation[0, 0] - rotation[1, 1], 0.0)) * 2.0
+            quaternion = np.array(
+                [
+                    (rotation[1, 0] - rotation[0, 1]) / scale,
+                    (rotation[0, 2] + rotation[2, 0]) / scale,
+                    (rotation[1, 2] + rotation[2, 1]) / scale,
+                    0.25 * scale,
+                ],
+                dtype=np.float64,
+            )
+
+    norm = float(np.linalg.norm(quaternion))
+    if norm < 1e-12:
+        raise ValueError("rotation could not be converted to a quaternion")
+    quaternion /= norm
+    if quaternion[0] < 0.0:
+        quaternion = -quaternion
+
+    axis_part = quaternion[1:]
+    sine_half = float(np.linalg.norm(axis_part))
+    if sine_half < 1e-10:
+        return 2.0 * axis_part
+    angle = 2.0 * math.atan2(sine_half, float(quaternion[0]))
+    return np.asarray(axis_part * (angle / sine_half), dtype=np.float64)
 
 
 class FafuArmKinematics:

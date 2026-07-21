@@ -12,8 +12,21 @@ import numpy as np
 from lerobot.robots.robot import Robot
 
 from .compat import make_cameras, read_camera_depth, read_camera_rgb
-from .config import JOINT_NAMES, FafuFollowerConfig
-from .kinematics import FafuArmKinematics
+from .config import FafuFollowerConfig
+from .kinematics import FafuArmKinematics, Pose
+from .representation import (
+    EE_COMPONENTS,
+    JOINT_NAMES,
+    action_features,
+    apply_pose_delta,
+    delta_action,
+    delta_from_action,
+    joint_action,
+    limit_vector_norm,
+    pose_action,
+    pose_delta,
+    pose_from_action,
+)
 from .sdk import default_sdk_config_path, load_sdk
 
 logger = logging.getLogger(__name__)
@@ -33,10 +46,27 @@ class FafuFollower(Robot):
         self._controller: Any | None = None
         self._last_joint_goal = np.zeros(len(JOINT_NAMES), dtype=np.float64)
         self._last_gripper_goal = config.gripper_min_rad
+        self._last_observation_pose: Pose | None = None
+        self._last_observation_time: float | None = None
 
     @property
-    def _motors_ft(self) -> dict[str, type]:
-        return {f"{name}.pos": float for name in (*JOINT_NAMES, "gripper")}
+    def _state_ft(self) -> dict[str, type]:
+        features: dict[str, type] = {}
+        if self.config.observation_mode in {"joint", "all"}:
+            features.update({f"{name}.pos": float for name in (*JOINT_NAMES, "gripper")})
+            if self.config.record_joint_velocity:
+                features.update({f"{name}.vel": float for name in (*JOINT_NAMES, "gripper")})
+            if self.config.record_motor_effort:
+                features.update({f"{name}.effort": float for name in (*JOINT_NAMES, "gripper")})
+
+        if self.config.observation_mode in {"ee_pose", "all"}:
+            features.update({f"ee.{name}": float for name in EE_COMPONENTS})
+            features["gripper.pos"] = float
+
+        if self.config.observation_mode == "all":
+            features.update({f"ee_delta.{name}": float for name in EE_COMPONENTS})
+
+        return features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
@@ -50,11 +80,11 @@ class FafuFollower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple[int, int, int]]:
-        return {**self._motors_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return self._motors_ft
+        return action_features(self.config.action_mode)
 
     @property
     def is_connected(self) -> bool:
@@ -90,6 +120,8 @@ class FafuFollower(Robot):
                 camera.connect()
             self._last_joint_goal = np.asarray(controller.get_joint_values(), dtype=np.float64)
             self._last_gripper_goal = self._read_gripper_angle()
+            self._last_observation_pose = None
+            self._last_observation_time = None
             self.configure()
         except Exception:
             self._disconnect_after_failed_connect()
@@ -122,10 +154,55 @@ class FafuFollower(Robot):
         if joints.shape != (len(JOINT_NAMES),):
             raise RuntimeError(f"SDK returned {joints.size} joints; expected {len(JOINT_NAMES)}")
 
-        observation: dict[str, Any] = {
-            f"{name}.pos": float(joints[index]) for index, name in enumerate(JOINT_NAMES)
-        }
-        observation["gripper.pos"] = self._read_gripper_angle()
+        gripper_state = controller.get_gripper_state()
+        gripper_position = self._gripper_angle(gripper_state)
+        observation: dict[str, Any] = {}
+
+        if self.config.observation_mode in {"joint", "all"}:
+            observation.update(
+                {f"{name}.pos": float(joints[index]) for index, name in enumerate(JOINT_NAMES)}
+            )
+            observation["gripper.pos"] = gripper_position
+
+            if self.config.record_joint_velocity:
+                velocities = np.asarray(controller.get_joint_velocities(), dtype=np.float64)
+                if velocities.shape != (len(JOINT_NAMES),):
+                    raise RuntimeError(
+                        f"SDK returned {velocities.size} joint velocities; expected {len(JOINT_NAMES)}"
+                    )
+                for index, name in enumerate(JOINT_NAMES):
+                    observation[f"{name}.vel"] = self._finite_scalar(velocities[index], f"{name}.vel")
+                observation["gripper.vel"] = (
+                    self._finite_scalar(gripper_state.velocity, "gripper.vel") * math.tau
+                )
+
+            if self.config.record_motor_effort:
+                states = controller.get_motor_states()
+                for name, motor_id in zip(JOINT_NAMES, controller.joint_motor_ids, strict=True):
+                    state = states.get(motor_id)
+                    if state is None:
+                        raise RuntimeError(f"SDK did not return motor state for {name} (id={motor_id})")
+                    observation[f"{name}.effort"] = self._finite_scalar(state.torque, f"{name}.effort")
+                observation["gripper.effort"] = self._finite_scalar(gripper_state.torque, "gripper.effort")
+
+        if self.config.observation_mode in {"ee_pose", "all"}:
+            pose = self.kinematics.forward(joints)
+            observation.update(pose_action(pose, gripper_position))
+
+            if self.config.observation_mode == "all":
+                now = time.perf_counter()
+                if (
+                    self._last_observation_pose is None
+                    or self._last_observation_time is None
+                    or now - self._last_observation_time > self.config.delta_reset_timeout_s
+                ):
+                    translation_delta = np.zeros(3, dtype=np.float64)
+                    rotation_delta = np.zeros(3, dtype=np.float64)
+                else:
+                    translation_delta, rotation_delta = pose_delta(self._last_observation_pose, pose)
+                observation.update(delta_action(translation_delta, rotation_delta, gripper_position))
+                self._last_observation_pose = pose
+                self._last_observation_time = now
         logger.debug("%s read motor state in %.1f ms", self, (time.perf_counter() - started_at) * 1e3)
 
         for name, camera in self.cameras.items():
@@ -138,12 +215,28 @@ class FafuFollower(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, float]:
         controller = self._require_controller()
         current_joints = np.asarray(controller.get_joint_values(), dtype=np.float64)
-        target_joints = self._last_joint_goal.copy()
+        if current_joints.shape != (len(JOINT_NAMES),):
+            raise RuntimeError(f"SDK returned {current_joints.size} joints; expected {len(JOINT_NAMES)}")
+        current_pose = None if self.config.action_mode == "joint" else self.kinematics.forward(current_joints)
+        control_mode = (
+            self.config.all_control_source if self.config.action_mode == "all" else self.config.action_mode
+        )
 
-        for index, name in enumerate(JOINT_NAMES):
-            key = f"{name}.pos"
-            if key in action:
-                target_joints[index] = self._finite_scalar(action[key], key)
+        if control_mode == "joint":
+            target_joints = self._last_joint_goal.copy()
+            for index, name in enumerate(JOINT_NAMES):
+                key = f"{name}.pos"
+                if key in action:
+                    target_joints[index] = self._finite_scalar(action[key], key)
+        else:
+            if current_pose is None:
+                raise RuntimeError("Cartesian action mode requires a current EE pose")
+            target_joints = self._cartesian_joint_target(
+                action,
+                control_mode=control_mode,
+                current_joints=current_joints,
+                current_pose=current_pose,
+            )
 
         target_joints = self._limit_joint_action(target_joints, current_joints)
         if self.config.use_servo:
@@ -176,9 +269,16 @@ class FafuFollower(Robot):
             )
             self._last_gripper_goal = gripper_goal
 
-        sent = {f"{name}.pos": float(target_joints[index]) for index, name in enumerate(JOINT_NAMES)}
-        sent[gripper_key] = float(self._last_gripper_goal)
-        return sent
+        if self.config.action_mode == "joint":
+            return joint_action(target_joints, self._last_gripper_goal)
+        if current_pose is None:
+            raise RuntimeError("Cartesian action mode requires a current EE pose")
+        actual_pose = self.kinematics.forward(target_joints)
+        return self._format_sent_action(
+            target_joints,
+            current_pose=current_pose,
+            actual_pose=actual_pose,
+        )
 
     def disconnect(self) -> None:
         if self._controller is None:
@@ -186,6 +286,8 @@ class FafuFollower(Robot):
 
         controller = self._controller
         self._controller = None
+        self._last_observation_pose = None
+        self._last_observation_time = None
         try:
             if getattr(controller, "is_servoing", False):
                 controller.servo_end(finish_mode=self.config.joint_release)
@@ -222,7 +324,76 @@ class FafuFollower(Robot):
 
     def _read_gripper_angle(self) -> float:
         state = self._require_controller().get_gripper_state()
-        return float(state.position) * math.tau
+        return self._gripper_angle(state)
+
+    @staticmethod
+    def _gripper_angle(state: Any) -> float:
+        angle = float(state.position) * math.tau
+        if not math.isfinite(angle):
+            raise RuntimeError("SDK returned a non-finite gripper position")
+        return angle
+
+    def _cartesian_joint_target(
+        self,
+        action: dict[str, Any],
+        *,
+        control_mode: str,
+        current_joints: np.ndarray,
+        current_pose: Pose,
+    ) -> np.ndarray:
+        if control_mode == "ee_pose":
+            desired_pose = pose_from_action(action)
+        elif control_mode == "ee_delta":
+            translation, rotation = delta_from_action(action)
+            desired_pose = apply_pose_delta(current_pose, translation, rotation)
+        else:
+            raise ValueError(f"Unsupported Cartesian control mode: {control_mode}")
+
+        desired_pose = self._limit_cartesian_target(desired_pose, current_pose)
+        solution = self.kinematics.inverse(
+            desired_pose.position,
+            desired_pose.rotation,
+            seed=current_joints,
+        )
+        if solution is None:
+            raise RuntimeError("pytracik could not find an IK solution; no motion command was sent")
+        return np.asarray(solution, dtype=np.float64)
+
+    def _limit_cartesian_target(self, target: Pose, current: Pose) -> Pose:
+        translation, rotation = pose_delta(current, target)
+        translation = limit_vector_norm(translation, self.config.max_ee_translation_step_m)
+        rotation = limit_vector_norm(rotation, self.config.max_ee_rotation_step_rad)
+        limited = apply_pose_delta(current, translation, rotation)
+
+        if self.config.ee_workspace_min is not None and self.config.ee_workspace_max is not None:
+            limited = Pose(
+                position=np.clip(
+                    limited.position,
+                    self.config.ee_workspace_min,
+                    self.config.ee_workspace_max,
+                ),
+                rotation=limited.rotation,
+            )
+        return limited
+
+    def _format_sent_action(
+        self,
+        joints: np.ndarray,
+        *,
+        current_pose: Pose,
+        actual_pose: Pose,
+    ) -> dict[str, float]:
+        mode = self.config.action_mode
+        gripper = float(self._last_gripper_goal)
+        sent: dict[str, float] = {}
+        if mode in {"joint", "all"}:
+            sent.update(joint_action(joints, gripper))
+        if mode in {"ee_pose", "all"}:
+            sent.update(pose_action(actual_pose, gripper))
+        if mode in {"ee_delta", "all"}:
+            translation, rotation = pose_delta(current_pose, actual_pose)
+            sent.update(delta_action(translation, rotation, gripper))
+        return sent
 
     def _limit_joint_action(self, target: np.ndarray, current: np.ndarray) -> np.ndarray:
         limited = target.copy()

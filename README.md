@@ -1,15 +1,16 @@
 # FAFU Arm × LeRobot
 
 `fafu_arm_lerobot` 是 FAFU 六轴机械臂的 LeRobot 第三方插件，提供数据采集、主从遥操作、
-数据回放、策略评估以及基于 pytracik 的 FK/IK。项目参考了
-[Panthera-HT_lerobot](https://github.com/HighTorque-Robotics/Panthera-HT_lerobot) 的设备划分，
-但硬件通信全部使用 [fafu_arm_sdk](https://github.com/FAFU-Robotics/fafu_arm_sdk)，不会修改或
-复制 LeRobot 源码。
+数据回放、策略评估以及基于 pytracik 的 FK/IK。硬件通信使用
+[fafu_arm_sdk](https://github.com/FAFU-Robotics/fafu_arm_sdk)，运动学模型、控制安全限制和
+LeRobot 设备接口均由本项目直接维护。
 
 ## 已实现
 
 - `fafu_follower`：LeRobot `Robot`，支持 6 关节 + 夹爪、相机、动作限幅和 30 Hz 流式控制。
 - `fafu_leader`：LeRobot `Teleoperator`，释放电机后读取人工拖动的关节和夹爪位置。
+- 动作支持关节角、绝对 EE 位姿、EE 增量和同步归档四种模式。
+- 默认观测同时保留关节位置/速度、绝对 EE 位姿和相邻帧 EE 增量。
 - `FafuArmKinematics`：使用 [pytracik](https://pypi.org/project/pytracik/) 完成 FK/IK。
 - LeRobot 0.4.3–0.6.x 第三方插件自动发现，无需修改 `lerobot` 包。
 - Windows 和 Ubuntu SDK 构建流程、离线软件检查、无动作硬件连通检查。
@@ -18,8 +19,8 @@
 
 `src/lerobot_robot_fafu_arm/resources/fafu_arm.urdf` 是只包含运动学链的可部署 URDF：
 
-- 六个关节的 origin、axis 和 limit 来自 WRS `PantheraHT` Python 模型，并与提供的
-  `fafu_follower.urdf` 交叉核对。
+- 六个关节的 origin、axis 和 limit 按 FAFU Arm 的机械尺寸与 `fafu_follower.urdf`
+  维护。
 - `tool_link` 从 `link6` 沿 URDF X 轴偏移 **0.175 m**。
 - 175 mm 来自当前夹爪代码中的 5 mm coupling + 170 mm acting center；相较原
   `fafu_follower.urdf` 的 165 mm，TCP 向前更新了 10 mm。
@@ -131,17 +132,25 @@ lerobot-record \
   --robot.type=fafu_follower \
   --robot.id=fafu_follower \
   --robot.port=/dev/ttyUSB0 \
+  --robot.action_mode=joint \
+  --robot.observation_mode=all \
   --teleop.type=fafu_leader \
   --teleop.id=fafu_leader \
   --teleop.port=/dev/ttyUSB1 \
+  --teleop.action_mode=joint \
   --dataset.repo_id=FAFU-Robotics/fafu_demo \
   --dataset.single_task="pick and place" \
   --dataset.num_episodes=20 \
   --dataset.episode_time_s=30
 ```
 
-相机使用 LeRobot 标准 camera config 传给 `--robot.cameras`。未配置相机时，插件只记录关节和
-夹爪状态。
+相机使用 LeRobot 标准 camera config 传给 `--robot.cameras`。默认的 `observation_mode=all`
+会同时记录关节位置/速度、绝对 EE 位姿、相邻帧 EE 增量和夹爪状态；action 默认是关节目标。
+
+`action_mode` 可在 `joint`、`ee_pose`、`ee_delta`、`all` 中选择，robot 与 teleop 必须一致。
+通常应在一个训练数据集中选择一种 action 表示；`all` 适合归档后再筛选，不建议直接让策略同时学习
+三套冗余动作。字段、单位、推荐配置及 pytracik 适用范围见
+[数据表示与采集模式](docs/DATA_FORMAT.md)。
 
 ### 回放
 
@@ -198,6 +207,13 @@ LeRobot CLI 中可传 `--robot.urdf_path=/path/to/custom_fafu.urdf`。
 
 | 参数 | 默认值 | 作用 |
 |---|---:|---|
+| `robot.action_mode` | `joint` | 数据集 action 与控制表示；也可选 `ee_pose`、`ee_delta`、`all` |
+| `teleop.action_mode` | `joint` | leader 输出表示，必须与 robot 一致 |
+| `robot.observation_mode` | `all` | 同时保存关节、绝对 EE 与 EE 增量状态 |
+| `robot.record_joint_velocity` | `true` | 保存 SDK 关节/夹爪速度 |
+| `robot.record_motor_effort` | `false` | 保存未标定的 SDK torque raw 值 |
+| `robot.max_ee_translation_step_m` | `0.03` m | 每帧最大 TCP 平移 |
+| `robot.max_ee_rotation_step_rad` | `0.20` rad | 每帧最大 TCP 转角 |
 | `robot.use_servo` | `true` | 使用 SDK `servo_j` 连续控制 |
 | `robot.servo_watchdog_ms` | `250` | 主机失联时固件刹车超时 |
 | `robot.servo_use_mit` | `false` | 默认走稳定的位置通道；调好动力学后可启用 MIT |
