@@ -102,9 +102,10 @@ export FAFU_ARM_SDK_PATH=/opt/fafu_arm_sdk
 
 ## 8. 现场操作手册
 
-以下现场步骤集中在 [采集、检查与故障恢复示例](OPERATIONS.md)：
+以下现场步骤集中在 [Data Collection 指南](DATA_COLLECTION.md)：
 
 - follower/leader 串口发现与只读连接；
 - OpenCV 双相机枚举、配置和画面确认；
 - 默认不上传的本地采集，以及私有/公开发布选择；
+- 数据保存、读取、CSV 导出、LeRobot/WRS 查看；
 - 数据字段检查、回放前校验、低速回放和故障恢复。

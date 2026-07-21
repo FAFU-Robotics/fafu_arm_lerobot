@@ -8,6 +8,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .local_dataset import (
+    DatasetReadError,
+    dataset_summary,
+    export_episode_csv,
+    load_dataset_info,
+    load_episode,
+)
 from .representation import ACTION_MODES, action_features
 
 
@@ -29,6 +36,36 @@ def build_parser() -> argparse.ArgumentParser:
         dest="as_json",
         help="Print a machine-readable report",
     )
+    return parser
+
+
+def build_collection_parser() -> argparse.ArgumentParser:
+    """Build the unified read/check/preview/export command parser."""
+
+    parser = argparse.ArgumentParser(description="Inspect and export a local FAFU LeRobot dataset")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    info = subparsers.add_parser("info", help="Show dataset metadata and available features")
+    info.add_argument("--root", type=Path, required=True, help="Local LeRobot dataset root")
+    info.add_argument("--json", action="store_true", dest="as_json")
+
+    check = subparsers.add_parser("check", help="Validate metadata before replay")
+    check.add_argument("--root", type=Path, required=True, help="Local LeRobot dataset root")
+    check.add_argument("--action-mode", choices=sorted(ACTION_MODES), required=True)
+    check.add_argument("--episode", type=int, default=0)
+    check.add_argument("--json", action="store_true", dest="as_json")
+
+    preview = subparsers.add_parser("preview", help="Print low-dimensional rows from one episode")
+    preview.add_argument("--root", type=Path, required=True, help="Local LeRobot dataset root")
+    preview.add_argument("--episode", type=int, default=0)
+    preview.add_argument("--rows", type=int, default=5, help="Number of rows to print")
+    preview.add_argument("--json", action="store_true", dest="as_json")
+
+    export = subparsers.add_parser("export", help="Export low-dimensional episode columns to CSV")
+    export.add_argument("--root", type=Path, required=True, help="Local LeRobot dataset root")
+    export.add_argument("--episode", type=int, default=0)
+    export.add_argument("--output", type=Path, required=True)
+    export.add_argument("--force", action="store_true", help="Overwrite an existing CSV file")
     return parser
 
 
@@ -135,6 +172,59 @@ def main(argv: list[str] | None = None) -> int:
         for error in report["errors"]:
             print(f"[FAIL] {error}", file=sys.stderr)
     return 0 if report["ok"] else 2
+
+
+def collection_main(argv: list[str] | None = None) -> int:
+    """Entry point for the unified local dataset command."""
+
+    args = build_collection_parser().parse_args(argv)
+    if args.command == "check":
+        forwarded = [
+            "--root",
+            str(args.root),
+            "--action-mode",
+            args.action_mode,
+            "--episode",
+            str(args.episode),
+        ]
+        if args.as_json:
+            forwarded.append("--json")
+        return main(forwarded)
+
+    try:
+        if args.command == "info":
+            report = dataset_summary(load_dataset_info(args.root))
+            if args.as_json:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print(f"[OK] dataset: {report['root']}")
+                print(f"[INFO] robot: {report['robot_type']}")
+                print(f"[INFO] LeRobot format: {report['codebase_version']}")
+                print(f"[INFO] episodes / frames: {report['total_episodes']} / {report['total_frames']}")
+                print(f"[INFO] fps: {report['fps']:g}")
+                print(f"[INFO] features: {', '.join(report['features'])}")
+                print(f"[INFO] cameras: {', '.join(report['camera_features']) or 'none'}")
+            return 0
+
+        if args.command == "preview" and args.rows < 0:
+            raise DatasetReadError("rows must be non-negative")
+        episode = load_episode(args.root, args.episode)
+        if args.command == "preview":
+            records = episode.records(args.rows)
+            if args.as_json:
+                print(json.dumps(records, ensure_ascii=False, indent=2))
+            else:
+                print(f"[OK] episode {args.episode}: {len(episode)} frame(s), showing {len(records)} row(s)")
+                for index, record in enumerate(records):
+                    print(f"[ROW {index}] {json.dumps(record, ensure_ascii=False, separators=(',', ':'))}")
+            return 0
+
+        output = export_episode_csv(episode, args.output, overwrite=args.force)
+        print(f"[OK] exported {len(episode)} frame(s) to {output}")
+        return 0
+    except (DatasetReadError, FileExistsError, OSError) as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

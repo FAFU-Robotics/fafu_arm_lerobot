@@ -7,8 +7,16 @@ from .kinematics import (
     rotation_matrix_to_rotvec,
     rotation_vector_to_matrix,
 )
+from .local_dataset import (
+    DatasetReadError,
+    EpisodeData,
+    LocalDatasetInfo,
+    export_episode_csv,
+    load_dataset_info,
+    load_episode,
+)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # LeRobot discovers third-party devices by importing distributions whose name
 # starts with ``lerobot_robot_``. Importing the config modules performs the
@@ -24,13 +32,19 @@ except ModuleNotFoundError as exc:
         raise
 
 __all__ = [
+    "DatasetReadError",
+    "EpisodeData",
     "FafuArmKinematics",
     "FafuFollower",
     "FafuFollowerConfig",
     "FafuLeader",
     "FafuLeaderConfig",
     "Pose",
+    "LocalDatasetInfo",
     "rotation_matrix_to_rotvec",
+    "export_episode_csv",
+    "load_dataset_info",
+    "load_episode",
     "rotation_vector_to_matrix",
     "default_urdf_path",
 ]

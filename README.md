@@ -109,8 +109,8 @@ $env:FAFU_ARM_SDK_PATH = "D:\code\fafu_arm_sdk"
 export FAFU_ARM_SDK_PATH=/opt/fafu_arm_sdk
 ```
 
-串口发现、双相机配置、数据字段检查、安全回放和故障恢复的完整流程见
-[采集、检查与故障恢复示例](docs/OPERATIONS.md)。
+串口发现、双相机配置、本地录制、数据保存/读取、LeRobot 与 WRS 查看、安全回放和故障恢复的
+完整流程见 [Data Collection 指南](docs/DATA_COLLECTION.md)。
 
 ## LeRobot 使用
 
@@ -160,11 +160,32 @@ lerobot-record \
 
 `action_mode` 可在 `joint`、`ee_pose`、`ee_delta`、`all` 中选择，robot 与 teleop 必须一致。
 通常应在一个训练数据集中选择一种 action 表示；`all` 适合归档后再筛选，不建议直接让策略同时学习
-三套冗余动作。字段、单位、推荐配置及 pytracik 适用范围见
-[数据表示与采集模式](docs/DATA_FORMAT.md)。
+三套冗余动作。字段、单位、推荐配置、pytracik 适用范围以及完整数据生命周期见
+[Data Collection 指南](docs/DATA_COLLECTION.md)。
 
 默认严格要求每帧 action 字段完整且没有未知字段，并在安全裁剪成功后将最终下发值写回动作字典。
 因此 LeRobot 默认录制流水线保存的是限幅后的命令，不是 leader 的越界请求值。
+
+### 读取、导出和查看
+
+录制结束后，不连接机械臂即可检查和预览本地数据：
+
+```bash
+fafu-arm-dataset info --root ./datasets/fafu_demo
+fafu-arm-dataset check --root ./datasets/fafu_demo --action-mode joint --episode 0
+fafu-arm-dataset preview --root ./datasets/fafu_demo --episode 0 --rows 3
+fafu-arm-dataset export --root ./datasets/fafu_demo --episode 0 --output ./exports/episode_000.csv
+```
+
+相机、状态和动作同步查看使用 LeRobot 官方 `lerobot-dataset-viz`。机械臂骨架和 TCP 三维轨迹可在
+WRS 中播放；先用 `--dry-run` 只校验数据：
+
+```bash
+fafu-arm-wrs-view --root ./datasets/fafu_demo --episode 0 --source observation --dry-run
+fafu-arm-wrs-view --root ./datasets/fafu_demo --episode 0 --wrs-path /path/to/wrs
+```
+
+Python 读取 API、CSV 规则、WRS 参数和数据目录说明见 [Data Collection 指南](docs/DATA_COLLECTION.md)。
 
 ### 回放
 
@@ -187,7 +208,7 @@ lerobot-replay \
 ```
 
 回放使用的 `robot.action_mode` 必须与数据集 action 字段一致。完整回放检查清单见
-[采集、检查与故障恢复示例](docs/OPERATIONS.md#5-回放前校验和低速回放)。
+[Data Collection 指南](docs/DATA_COLLECTION.md#7-回放前校验和低速回放)。
 
 ### 策略评估/采集 rollout
 
