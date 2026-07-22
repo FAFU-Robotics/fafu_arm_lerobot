@@ -34,6 +34,7 @@ class ActTrainConfig:
     dataset_root: Path
     output_dir: Path
     action_mode: str
+    urdf_path: Path | None = None
     policy_type: str = "act"
     device: str | None = None
     steps: int = 100_000
@@ -47,7 +48,6 @@ class ActTrainConfig:
     eval_split: float = 0.0
     eval_steps: int = 0
     temporal_ensemble_coeff: float | None = None
-    use_amp: bool = False
     wandb: bool = False
     push_to_hub: bool = False
     public: bool = False
@@ -61,6 +61,8 @@ class ActTrainConfig:
             raise ValueError("policy_type must use lowercase letters, digits, and underscores")
         if not self.dataset_repo_id.strip():
             raise ValueError("dataset_repo_id must not be empty")
+        if self.urdf_path is not None and not Path(self.urdf_path).expanduser().is_file():
+            raise ValueError(f"urdf_path does not exist: {Path(self.urdf_path).expanduser().resolve()}")
         for name in ("steps", "batch_size", "save_freq", "log_freq", "chunk_size", "n_action_steps"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -110,7 +112,6 @@ def build_act_command(config: ActTrainConfig, executable: str = "lerobot-train")
         f"--log_freq={config.log_freq}",
         f"--policy.chunk_size={config.chunk_size}",
         f"--policy.n_action_steps={config.n_action_steps}",
-        f"--policy.use_amp={str(config.use_amp).lower()}",
         f"--wandb.enable={str(config.wandb).lower()}",
         f"--policy.push_to_hub={str(config.push_to_hub).lower()}",
     ]

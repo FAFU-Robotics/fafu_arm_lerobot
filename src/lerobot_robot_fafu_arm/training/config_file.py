@@ -26,6 +26,7 @@ _TOP_LEVEL_KEYS = {
 _GROUP_FIELDS: dict[str, dict[str, tuple[str, type | tuple[type, ...]]]] = {
     "dataset": {
         "repo_id": ("dataset_repo_id", str),
+        "urdf_path": ("urdf_path", (str, type(None))),
         "root": ("dataset_root", str),
         "action_mode": ("action_mode", str),
     },
@@ -58,7 +59,6 @@ _POLICY_DIRECT_FIELDS: dict[str, tuple[str, type | tuple[type, ...]]] = {
     "chunk_size": ("chunk_size", int),
     "n_action_steps": ("n_action_steps", int),
     "temporal_ensemble_coeff": ("temporal_ensemble_coeff", (int, float, type(None))),
-    "use_amp": ("use_amp", bool),
 }
 
 _POLICY_TUNING_FIELDS: dict[str, type | tuple[type, ...]] = {
@@ -136,8 +136,8 @@ def load_act_yaml(path: str | Path) -> dict[str, Any]:
             raise TrainingConfigError(f"invalid custom policy option name: {name!r}")
         extra_args.append(f"policy.{name}={_format_scalar(value, f'policy.extra.{name}')}")
 
-    for key in ("dataset_root", "output_dir"):
-        if key in values:
+    for key in ("dataset_root", "output_dir", "urdf_path"):
+        if key in values and values[key] is not None:
             values[key] = Path(values[key])
     if "eval_split" in values:
         values["eval_split"] = float(values["eval_split"])

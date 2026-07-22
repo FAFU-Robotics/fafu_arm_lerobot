@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from lerobot_robot_fafu_arm.training.config_file import TrainingConfigError, load_act_yaml
@@ -89,3 +91,32 @@ hub:
 
     with pytest.raises(TrainingConfigError, match="policy.dropout"):
         load_act_yaml(config)
+
+
+@pytest.mark.parametrize(
+    ("yaml_value", "expected"),
+    [
+        ("null", None),
+        ("./urdfs/custom.urdf", Path("urdfs/custom.urdf")),
+    ],
+)
+def test_load_act_yaml_maps_optional_dataset_urdf_to_path(tmp_path, yaml_value, expected):
+    config = tmp_path / "act.yaml"
+    config.write_text(
+        f"""
+schema_version: 1
+algorithm: act
+dataset:
+  repo_id: FAFU-Robotics/demo
+  root: ./datasets/demo
+  action_mode: joint
+  urdf_path: {yaml_value}
+run:
+  output_dir: ./outputs/demo
+""".strip(),
+        encoding="utf-8",
+    )
+
+    values = load_act_yaml(config)
+
+    assert values["urdf_path"] == expected

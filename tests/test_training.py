@@ -101,6 +101,35 @@ def test_act_command_is_local_and_private_by_default(tmp_path):
     assert not any(argument.startswith("--policy.repo_id=") for argument in command)
 
 
+def test_act_command_parses_with_real_lerobot_training_config(tmp_path):
+    draccus = pytest.importorskip("draccus")
+    train_module = pytest.importorskip("lerobot.configs.train")
+    from lerobot.utils.import_utils import register_third_party_plugins
+
+    register_third_party_plugins()
+    config = ActTrainConfig(
+        dataset_repo_id="FAFU-Robotics/demo",
+        dataset_root=tmp_path / "dataset",
+        output_dir=tmp_path / "output",
+        action_mode="joint",
+        device="cpu",
+        eval_split=0.1,
+        eval_steps=100,
+    )
+
+    parsed = draccus.parse(
+        train_module.TrainPipelineConfig,
+        args=build_act_command(config)[1:],
+        exit_on_error=False,
+    )
+
+    assert parsed.policy.type == "act"
+    assert parsed.policy.device == "cpu"
+    assert parsed.dataset.repo_id == "FAFU-Robotics/demo"
+    assert parsed.dataset.eval_split == pytest.approx(0.1)
+    assert parsed.eval_steps == 100
+
+
 def test_act_command_upload_is_private_unless_explicitly_public(tmp_path):
     config = ActTrainConfig(
         dataset_repo_id="FAFU-Robotics/demo",
@@ -224,3 +253,68 @@ hub:
     assert "--steps=1234" in output_text
     assert "--steps=50000" not in output_text
     assert not output.exists()
+
+
+def test_training_preflight_rejects_dataset_without_observation_state(tmp_path):
+    write_training_dataset(tmp_path, action_names=joint_names())
+    info_path = tmp_path / "meta" / "info.json"
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    del info["features"]["observation.state"]
+    info_path.write_text(json.dumps(info), encoding="utf-8")
+
+    report = check_training_dataset(tmp_path, "joint")
+
+    assert not report.ok
+    assert any("ACT requires observation.state" in error for error in report.errors)
+
+
+def test_training_preflight_rejects_single_channel_camera(tmp_path):
+    write_training_dataset(
+        tmp_path,
+        action_names=joint_names(),
+        camera_shapes={"front": [1, 480, 640]},
+    )
+    info_path = tmp_path / "meta" / "info.json"
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    info["features"]["observation.images.front"]["names"] = [
+        "channels",
+        "height",
+        "width",
+    ]
+    info_path.write_text(json.dumps(info), encoding="utf-8")
+
+    report = check_training_dataset(tmp_path, "joint")
+
+    assert not report.ok
+    assert any("3-channel RGB" in error for error in report.errors)
+
+
+def test_act_custom_urdf_is_validated_but_not_forwarded_to_lerobot_train(tmp_path):
+    urdf = tmp_path / "custom.urdf"
+    urdf.write_text("<robot name='custom'/>", encoding="utf-8")
+    config = ActTrainConfig(
+        dataset_repo_id="FAFU-Robotics/demo",
+        dataset_root=tmp_path / "dataset",
+        output_dir=tmp_path / "output",
+        action_mode="joint",
+        urdf_path=urdf,
+    )
+
+    command = build_act_command(config)
+
+    assert str(urdf.resolve()) not in command
+    assert not any(argument.startswith(("--urdf", "--dataset.urdf")) for argument in command)
+
+
+def test_act_config_rejects_missing_custom_urdf(tmp_path):
+    missing = tmp_path / "missing.urdf"
+    config = ActTrainConfig(
+        dataset_repo_id="FAFU-Robotics/demo",
+        dataset_root=tmp_path / "dataset",
+        output_dir=tmp_path / "output",
+        action_mode="joint",
+        urdf_path=missing,
+    )
+
+    with pytest.raises(ValueError, match="urdf_path does not exist"):
+        build_act_command(config)

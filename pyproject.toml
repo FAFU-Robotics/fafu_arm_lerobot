@@ -27,10 +27,14 @@ dependencies = [
   "numpy>=1.24",
   "pyarrow>=14,<30",
   "PyYAML>=6,<7",
+  "pyyaml-include>=1.4,<2",
   "pytracik>=0.0.3,<0.1",
 ]
 
 [project.optional-dependencies]
+train = [
+  "lerobot[training]>=0.6,<0.7",
+]
 dev = [
   "build>=1.2",
   "pytest>=8.0",
@@ -44,6 +48,7 @@ fafu-arm-dataset-check = "lerobot_robot_fafu_arm.dataset_cli:main"
 fafu-arm-dataset = "lerobot_robot_fafu_arm.dataset_cli:collection_main"
 fafu-arm-wrs-view = "lerobot_robot_fafu_arm.wrs_viewer:main"
 fafu-arm-train = "lerobot_robot_fafu_arm.training.cli:main"
+fafu-arm-infer = "lerobot_robot_fafu_arm.inference.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/FAFU-Robotics/fafu_arm_lerobot"
@@ -63,6 +68,7 @@ lerobot_robot_fafu_arm = ["resources/*.urdf", "resources/*.cfg"]
 [tool.setuptools.data-files]
 "share/doc/lerobot_robot_fafu_arm" = ["docs/*.md"]
 "share/lerobot_robot_fafu_arm/configs/train" = ["configs/train/*.yaml"]
+"share/lerobot_robot_fafu_arm/configs/inference" = ["configs/inference/*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"

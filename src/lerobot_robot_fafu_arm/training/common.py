@@ -101,9 +101,7 @@ def check_training_dataset(root: str | Path, action_mode: str) -> TrainingDatase
     _check_camera_shapes(info.features, camera_features, errors)
 
     if "observation.state" not in info.features:
-        warnings.append(
-            "observation.state is absent; ACT can be visual-only, but the recommended FAFU baseline uses proprioception"
-        )
+        errors.append("LeRobot 0.6 ACT requires observation.state; visual-only FAFU training is unsupported")
 
     total_frames_raw = info.raw.get("total_frames")
     total_frames = (
@@ -200,13 +198,54 @@ def _check_camera_shapes(
     camera_features: tuple[str, ...],
     errors: list[str],
 ) -> None:
-    shapes: dict[str, tuple[int, ...]] = {}
+    shapes: dict[str, tuple[int, int, int]] = {}
     for key in camera_features:
-        raw_shape = features[key].get("shape")
-        if not isinstance(raw_shape, (list, tuple)) or not all(isinstance(value, int) for value in raw_shape):
-            errors.append(f"camera feature {key!r} has an invalid shape: {raw_shape!r}")
+        if not key.startswith("observation.images."):
+            errors.append(f"camera feature {key!r} must start with 'observation.images.'")
             continue
-        shapes[key] = tuple(raw_shape)
+        normalized = _normalized_camera_shape(key, features[key], errors)
+        if normalized is not None:
+            shapes[key] = normalized
     if len(set(shapes.values())) > 1:
         details = ", ".join(f"{key}={shape}" for key, shape in shapes.items())
         errors.append(f"ACT camera features must use the same shape; found {details}")
+
+
+def _normalized_camera_shape(
+    key: str,
+    feature: dict[str, Any],
+    errors: list[str],
+) -> tuple[int, int, int] | None:
+    raw_shape = feature.get("shape")
+    if (
+        not isinstance(raw_shape, (list, tuple))
+        or len(raw_shape) != 3
+        or not all(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in raw_shape
+        )
+    ):
+        errors.append(f"camera feature {key!r} has an invalid positive 3-D shape: {raw_shape!r}")
+        return None
+
+    shape = tuple(raw_shape)
+    names = feature.get("names")
+    if names == ["channels", "height", "width"]:
+        channels, height, width = shape
+    elif names == ["height", "width", "channels"]:
+        height, width, channels = shape
+    elif names is None:
+        possible = [index for index in (0, 2) if shape[index] == 3]
+        if len(possible) != 1:
+            errors.append(f"camera feature {key!r} has an ambiguous RGB channel layout")
+            return None
+        if possible[0] == 0:
+            channels, height, width = shape
+        else:
+            height, width, channels = shape
+    else:
+        errors.append(f"camera feature {key!r}.names must describe HWC or CHW dimensions")
+        return None
+    if channels != 3:
+        errors.append(f"LeRobot 0.6 ACT camera feature {key!r} must be 3-channel RGB")
+        return None
+    return channels, height, width

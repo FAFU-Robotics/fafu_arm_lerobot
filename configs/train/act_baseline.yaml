@@ -6,6 +6,7 @@ dataset:
   repo_id: FAFU-Robotics/fafu_demo
   root: ./datasets/fafu_demo
   action_mode: joint  # joint (recommended baseline), ee_delta, or ee_pose
+  urdf_path: null  # null uses the packaged FAFU URDF; set the collection URDF when customized
 
 run:
   output_dir: ./outputs/train/act_fafu_joint_seed1000
@@ -23,7 +24,6 @@ policy:
   chunk_size: 100
   n_action_steps: 10
   temporal_ensemble_coeff: null
-  use_amp: false
 
   # Optimizer. Change one variable at a time and keep the baseline file unchanged.
   optimizer_lr: 0.00001

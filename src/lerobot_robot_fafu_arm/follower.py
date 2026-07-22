@@ -269,6 +269,17 @@ class FafuFollower(Robot):
                 gripper=gripper_goal,
             )
 
+        # This is the final validation boundary before either actuator can be
+        # commanded. Keep it after IK, limiting, FK, and action formatting so a
+        # malformed result from any of those stages cannot reach the SDK.
+        target_joints = np.asarray(target_joints, dtype=np.float64)
+        if target_joints.shape != (len(JOINT_NAMES),):
+            raise RuntimeError(f"Target must contain exactly {len(JOINT_NAMES)} joint positions")
+        if not np.all(np.isfinite(target_joints)):
+            raise RuntimeError("Target joint positions must be finite; no motion command was sent")
+        if not math.isfinite(gripper_goal):
+            raise RuntimeError("Target gripper position must be finite; no motion command was sent")
+
         if self.config.use_servo:
             if not controller.servo_j(target_joints):
                 reason = getattr(controller, "servo_aborted_reason", None)
@@ -333,7 +344,10 @@ class FafuFollower(Robot):
                 logger.exception("Failed to close camera after connection error")
         if controller is not None:
             try:
-                controller.close_connection(joint_release="stop", gripper_release="brake")
+                controller.close_connection(
+                    joint_release=self.config.joint_release,
+                    gripper_release=self.config.gripper_release,
+                )
             except Exception:
                 logger.exception("Failed to close FAFU controller after connection error")
 

@@ -6,6 +6,7 @@ dataset:
   repo_id: FAFU-Robotics/fafu_demo
   root: ./datasets/fafu_demo
   action_mode: joint
+  urdf_path: null  # null uses the packaged FAFU URDF; set the collection URDF when customized
 
 run:
   output_dir: ./outputs/train/fafu_act_demo_seed1000
@@ -21,7 +22,6 @@ policy:
   type: fafu_act_demo
   chunk_size: 100
   n_action_steps: 10
-  use_amp: false
   optimizer_lr: 0.00001
   dropout: 0.1
   use_vae: true

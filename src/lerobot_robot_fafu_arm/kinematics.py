@@ -148,6 +148,8 @@ class FafuArmKinematics:
         solver_class: type[Any] | None = None,
     ) -> None:
         self.urdf_path = Path(urdf_path) if urdf_path else default_urdf_path()
+        self.base_link = base_link
+        self.tip_link = tip_link
         if not self.urdf_path.is_file():
             raise FileNotFoundError(f"URDF not found: {self.urdf_path}")
         if solver_class is None:

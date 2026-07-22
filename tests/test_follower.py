@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from lerobot_robot_fafu_arm.kinematics import Pose
 
@@ -78,6 +79,13 @@ class FakeKinematics:
     def inverse(self, position, rotation, seed=None):
         result = np.asarray(seed, dtype=float).copy()
         result[0] = float(position[0]) - 0.2
+        return result
+
+
+class NonFiniteIKKinematics(FakeKinematics):
+    def inverse(self, position, rotation, seed=None):
+        result = np.asarray(seed, dtype=float).copy()
+        result[2] = float("nan")
         return result
 
 
@@ -291,6 +299,136 @@ def test_follower_validates_complete_action_before_hardware_write(monkeypatch, t
     robot.disconnect()
 
 
+def test_follower_rejects_nonfinite_ik_target_before_hardware_write(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+    follower_module = importlib.import_module("lerobot_robot_fafu_arm.follower")
+    monkeypatch.setattr(follower_module, "FafuArmKinematics", NonFiniteIKKinematics)
+
+    controller = FakeController()
+    bindings = SimpleNamespace(
+        controller_class=lambda **kwargs: controller,
+        servo_options_class=FakeServoOptions,
+    )
+    monkeypatch.setattr(follower_module, "load_sdk", lambda path: bindings)
+
+    config = config_module.FafuFollowerConfig(
+        calibration_dir=tmp_path / "nonfinite_ik_calibration",
+        action_mode="ee_delta",
+        max_relative_target=None,
+    )
+    robot = follower_module.FafuFollower(config)
+    robot.connect()
+
+    action = {
+        "ee_delta.x": 0.01,
+        "ee_delta.y": 0.0,
+        "ee_delta.z": 0.0,
+        "ee_delta.wx": 0.0,
+        "ee_delta.wy": 0.0,
+        "ee_delta.wz": 0.0,
+        "gripper.pos": 0.1,
+    }
+    with pytest.raises(RuntimeError, match="Target joint positions must be finite"):
+        robot.send_action(action)
+    assert controller.last_servo is None
+    assert controller.last_gripper is None
+    robot.disconnect()
+
+
+def test_follower_config_rejects_unsafe_numeric_values(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+
+    invalid_cases = (
+        ({"delta_reset_timeout_s": True}, "delta_reset_timeout_s"),
+        ({"delta_reset_timeout_s": float("nan")}, "delta_reset_timeout_s"),
+        ({"delta_reset_timeout_s": 10.01}, "delta_reset_timeout_s"),
+        ({"max_ee_translation_step_m": False}, "max_ee_translation_step_m"),
+        ({"max_ee_translation_step_m": float("inf")}, "max_ee_translation_step_m"),
+        ({"max_ee_translation_step_m": 0.251}, "max_ee_translation_step_m"),
+        ({"max_ee_rotation_step_rad": True}, "max_ee_rotation_step_rad"),
+        ({"max_ee_rotation_step_rad": float("nan")}, "max_ee_rotation_step_rad"),
+        ({"max_ee_rotation_step_rad": math.pi + 0.01}, "max_ee_rotation_step_rad"),
+        (
+            {
+                "ee_workspace_min": (False, -0.2, 0.1),
+                "ee_workspace_max": (0.5, 0.2, 0.4),
+            },
+            "ee_workspace_min",
+        ),
+        (
+            {
+                "ee_workspace_min": (-2.01, -0.2, 0.1),
+                "ee_workspace_max": (0.5, 0.2, 0.4),
+            },
+            "workspace coordinates",
+        ),
+        ({"gripper_min_rad": False}, "gripper_min_rad"),
+        ({"gripper_max_rad": float("inf")}, "gripper_max_rad"),
+        ({"gripper_min_rad": -0.01}, "gripper bounds"),
+        ({"gripper_max_rad": math.tau + 0.01}, "gripper bounds"),
+        ({"servo_watchdog_ms": False}, "servo_watchdog_ms"),
+        ({"servo_watchdog_ms": 29}, "servo_watchdog_ms"),
+        ({"servo_watchdog_ms": 1_001}, "servo_watchdog_ms"),
+        ({"servo_max_velocity": True}, "servo_max_velocity"),
+        ({"servo_max_velocity": float("nan")}, "servo_max_velocity"),
+        ({"servo_max_velocity": 5.01}, "servo_max_velocity"),
+        ({"servo_max_step_rad": False}, "servo_max_step_rad"),
+        ({"servo_max_step_rad": float("inf")}, "servo_max_step_rad"),
+        ({"servo_max_step_rad": 0.501}, "servo_max_step_rad"),
+        ({"servo_max_lag_rad": True}, "servo_max_lag_rad"),
+        ({"servo_max_lag_rad": float("nan")}, "servo_max_lag_rad"),
+        ({"servo_max_lag_rad": 1.01}, "servo_max_lag_rad"),
+        ({"servo_rate_hz": False}, "servo_rate_hz"),
+        ({"servo_rate_hz": float("inf")}, "servo_rate_hz"),
+        ({"servo_rate_hz": 9.99}, "servo_rate_hz"),
+        ({"servo_rate_hz": 200.01}, "servo_rate_hz"),
+        ({"max_relative_target": True}, "max_relative_target"),
+        ({"max_relative_target": float("nan")}, "max_relative_target"),
+        ({"max_relative_target": 0.501}, "max_relative_target"),
+        ({"max_relative_target": {}}, "max_relative_target"),
+        ({"max_relative_target": {"joint1": False}}, "max_relative_target"),
+        ({"max_relative_target": {"joint1": float("inf")}}, "max_relative_target"),
+        ({"gripper_effort": False}, "gripper_effort"),
+        ({"gripper_effort": -1}, "gripper_effort"),
+        ({"gripper_effort": 32_768}, "gripper_effort"),
+        ({"gripper_effort": 300.0}, "gripper_effort"),
+    )
+
+    for overrides, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            config_module.FafuFollowerConfig(
+                calibration_dir=tmp_path / "invalid_config_calibration",
+                **overrides,
+            )
+
+
+def test_follower_config_accepts_safety_boundaries(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+
+    config = config_module.FafuFollowerConfig(
+        calibration_dir=tmp_path / "boundary_config_calibration",
+        delta_reset_timeout_s=10.0,
+        max_ee_translation_step_m=0.25,
+        max_ee_rotation_step_rad=math.pi,
+        ee_workspace_min=(-2.0, -2.0, -2.0),
+        ee_workspace_max=(2.0, 2.0, 2.0),
+        servo_watchdog_ms=30,
+        servo_max_velocity=5.0,
+        servo_max_step_rad=0.5,
+        servo_max_lag_rad=1.0,
+        servo_rate_hz=200.0,
+        max_relative_target={"joint1": 0.5},
+        gripper_min_rad=0.0,
+        gripper_max_rad=math.tau,
+        gripper_effort=32_767,
+    )
+
+    assert config.gripper_effort == 32_767
+
+
 def test_follower_rejects_cartesian_motion_when_current_pose_is_outside_workspace(monkeypatch, tmp_path):
     install_fake_lerobot(monkeypatch)
     config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
@@ -382,3 +520,24 @@ def test_leader_all_mode_emits_all_action_representations(monkeypatch, tmp_path)
     assert set(second) == set(leader.action_features)
     assert controller.disabled
     leader.disconnect()
+
+
+def test_failed_connect_cleanup_respects_configured_release_mode(monkeypatch, tmp_path):
+    install_fake_lerobot(monkeypatch)
+    config_module = importlib.import_module("lerobot_robot_fafu_arm.config")
+    follower_module = importlib.import_module("lerobot_robot_fafu_arm.follower")
+    monkeypatch.setattr(follower_module, "FafuArmKinematics", FakeKinematics)
+
+    controller = FakeController()
+    config = config_module.FafuFollowerConfig(
+        calibration_dir=tmp_path / "cleanup_calibration",
+        joint_release="brake",
+        gripper_release="brake",
+    )
+    robot = follower_module.FafuFollower(config)
+    robot._controller = controller
+
+    robot._disconnect_after_failed_connect()
+
+    assert robot._controller is None
+    assert controller.close_options == {"joint_release": "brake", "gripper_release": "brake"}

@@ -2,7 +2,7 @@
 
 `fafu_arm_lerobot` 是 FAFU 六轴机械臂的 LeRobot 第三方插件。硬件通信由
 [fafu_arm_sdk](https://github.com/FAFU-Robotics/fafu_arm_sdk) 提供，本项目负责 LeRobot 设备接口、
-运动学、动作表示、数据工具和训练入口。
+运动学、动作表示、数据工具、训练和安全推理入口。
 
 ## 功能
 
@@ -13,12 +13,13 @@
 - `FafuArmKinematics`：使用 pytracik 完成 FK/IK。
 - `fafu-arm-dataset`、`fafu-arm-wrs-view`：检查、读取、导出和查看本地数据。
 - `fafu-arm-train`：ACT 数据预检、YAML 配置和官方 LeRobot 训练入口。
+- `fafu-arm-infer`：严格校验 ACT checkpoint/processor 哈希和训练 schema，再执行有限时长推理。
 
 ## 推荐运行档案
 
 | 用途 | Python | LeRobot | FAFU SDK |
 |---|---|---|---|
-| 完整采集、ACT 训练与 rollout（推荐） | 3.12 | 0.6.x；复现基线固定为 0.6.0 | 用同一 Python 重新编译 |
+| 完整采集、ACT 训练与推理（推荐） | 3.12 | 0.6.x；复现基线固定为 0.6.0 | 用同一 Python 重新编译 |
 | 复用已有 Windows `cp310` SDK | 3.10 | 0.4.3 | 可使用匹配 ABI 的已有二进制 |
 
 不要混用不同 Python ABI 生成的 `fafu_motor`。完整版本说明、平台构建和验收步骤见
@@ -51,8 +52,8 @@ source .venv/bin/activate
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "lerobot[core-scripts]==0.6.0"
-python -m pip install -e .
+python -m pip install "lerobot[core-scripts,training]==0.6.0"
+python -m pip install -e ".[train]"
 ```
 
 然后按[部署指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DEPLOYMENT.md)为当前 Python 构建 FAFU SDK，再执行：
@@ -103,29 +104,38 @@ fafu-arm-train act --config configs/train/act_baseline.yaml
 fafu-arm-train act --config configs/train/act_baseline.yaml --run
 ```
 
-action 表示选择、调参、断点续训、策略评估及 ACT 网络修改 demo 见
-[Policy Training 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/TRAINING.md)。
+训练收尾会为每个 `pretrained_model` 写入绑定模型和 processor SHA-256 的 manifest。若直接使用官方 `lerobot-train --resume=true`，成功后补跑：
 
-## FK / IK
-
-```python
-import numpy as np
-from lerobot_robot_fafu_arm import FafuArmKinematics
-
-kin = FafuArmKinematics()
-q = np.array([0.0, 0.5, 1.0, 0.0, 0.0, 0.0])
-pose = kin.forward(q)
-solution = kin.inverse(position=pose.position, rotation=pose.rotation, seed=q)
-
-if solution is None:
-    raise RuntimeError("target is unreachable")
+```bash
+fafu-arm-train act --config configs/train/act_baseline.yaml --sync-manifest
 ```
 
-自定义模型可传入 URDF 路径：
+action 表示选择、调参、断点续训、ACT 推理、策略评估及网络修改 demo 见
+[Policy Training 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/TRAINING.md)。推理自定义 ACT checkpoint 前，推理环境必须安装训练时完全相同的 policy plugin 版本或 Git commit。
 
-```python
-kin = FafuArmKinematics("/path/to/custom_fafu.urdf")
+## 代表性示例
+
+`examples/` 只保留两个端到端路径，避免复制已有 CLI：
+
+- `kinematics_demo.py`：无硬件验证 URDF 的 FK → IK → FK 残差。
+- `act_inference.py`：ACT checkpoint/schema/processor 合成帧预检，以及显式授权后的真机推理。
+
+运动学示例默认使用随包 URDF，也可传入自定义模型：
+
+```bash
+python examples/kinematics_demo.py
+python examples/kinematics_demo.py --urdf /path/to/custom_fafu.urdf
 ```
+
+ACT 示例默认不连接硬件。下列行尾 `\` 是 Bash 续行符；PowerShell 请改为单行，或换成行尾反引号（反引号后不能有空格）：
+
+```bash
+python examples/act_inference.py \
+  --checkpoint outputs/train/act_fafu_joint_seed1000/checkpoints/last/pretrained_model \
+  --cameras configs/inference/opencv_camera.yaml
+```
+
+该 dry-run 不打开相机；真机前仍须人工确认 camera key 对应正确物理设备、画面是三通道 RGB 且颜色/方向正确、实测 FPS 与训练一致。真机还必须提供 `--port /dev/serial/by-id/FOLLOWER_DEVICE`、7 个现场确认的 `--start-joints` 弧度值，以及 `--servo-max-velocity 0.3 --duration 5 --run`；起始值只用于校验，不会自动移动机械臂。完整命令见训练指南。
 
 TCP、关节轴和模型替换方法见 [URDF 说明](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/URDF.md)。
 
@@ -135,7 +145,7 @@ TCP、关节轴和模型替换方法见 [URDF 说明](https://github.com/FAFU-Ro
 |---|---|
 | 选择版本、构建 SDK、端口分配和分阶段验收 | [部署指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DEPLOYMENT.md) |
 | 采集、保存、读取、查看、发布、回放和恢复 | [Data Collection 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DATA_COLLECTION.md) |
-| ACT 训练、调参、评估和网络修改 | [Policy Training 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/TRAINING.md) |
+| ACT 训练、推理、调参、评估和网络修改 | [Policy Training 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/TRAINING.md) |
 | URDF、TCP 和坐标轴 | [URDF 说明](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/URDF.md) |
 
 ## 安全要求
@@ -144,7 +154,7 @@ TCP、关节轴和模型替换方法见 [URDF 说明](https://github.com/FAFU-Ro
 - 首次运动使用 `robot.max_relative_target=0.03`，逐关节核对方向、软限位和释放行为。
 - 未经实机标定，不修改 TCP、关节方向、SDK 软限位或启用 MIT 控制。
 - 保持严格 action 字段校验、限幅和 servo watchdog；校验失败时修复输入，不绕过保护。
-- 真机回放和策略评估前执行 Data Collection 指南中的预检，并从低速短时运行开始。
+- 真机回放和策略评估前执行 Data Collection 指南中的预检，并从低速短时运行开始；策略推理退出时固定使用关节 `brake`，不释放重力轴。
 
 ## 开发验证
 
