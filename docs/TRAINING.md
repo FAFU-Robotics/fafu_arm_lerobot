@@ -20,12 +20,17 @@ src/lerobot_robot_fafu_arm/
 ├── follower.py / leader.py / kinematics.py   # 硬件与运动学，不依赖具体算法
 └── training/
     ├── common.py                              # 所有算法共用的数据/运行时检查
+    ├── config_file.py                         # 严格、版本化的 YAML 读取
     ├── act.py                                 # ACT 参数和官方命令适配
     └── cli.py                                 # fafu-arm-train；以后增加 diffusion/dp3 子命令
+configs/train/
+├── act_baseline.yaml                          # 官方 ACT 的 FAFU 可复现实验基线
+└── fafu_act_demo.yaml                         # 网络修改 demo 的实验配置
+policies/lerobot_policy_fafu_act_demo/          # 独立的 ACT 网络修改示例
 ```
 
-当确实要改变网络结构时，再按 LeRobot 官方规范增加独立的 `lerobot_policy_fafu_act` 策略插件；不要修改
-虚拟环境中的 `site-packages/lerobot`。具体做法见第 8 节。
+参数实验放 YAML，网络结构实验放独立 policy plugin；不要修改虚拟环境中的 `site-packages/lerobot`。仓库已包含一个
+可以训练的残差 action head demo，具体做法见第 8 节。
 
 ## 2. 先选动作表示
 
@@ -77,18 +82,32 @@ fafu-arm-dataset check --root ./datasets/fafu_demo --action-mode joint --episode
 
 ### 3.2 预检并生成命令
 
-下面命令不会启动 GPU，只检查数据并打印最终 `lerobot-train` 命令，因此可以安全地先运行：
+正式实验推荐复制并修改 `configs/train/act_baseline.yaml`。至少设置 `dataset.root`、`dataset.repo_id`、
+`dataset.action_mode` 和一个全新的 `run.output_dir`。然后先 dry-run；它不会启动 GPU，只检查数据并打印最终
+`lerobot-train` 命令：
+
+```bash
+fafu-arm-train act --config configs/train/act_baseline.yaml
+```
+
+检查通过后启动训练：
+
+```bash
+fafu-arm-train act --config configs/train/act_baseline.yaml --run
+```
+
+
+命令行值会覆盖 YAML，适合临时做一个单变量实验：
+
+```bash
+fafu-arm-train act --config configs/train/act_baseline.yaml --seed 1001 --output-dir ./outputs/train/act_joint_seed1001 --run
+```
+
+不使用 YAML 也仍然支持完整命令行：
 
 ```bash
 fafu-arm-train act --dataset-root ./datasets/fafu_demo --dataset-repo-id FAFU-Robotics/fafu_demo --action-mode joint --output-dir ./outputs/train/act_fafu_joint --device cuda
 ```
-
-通过后在同一命令末尾增加 `--run`：
-
-```bash
-fafu-arm-train act --dataset-root ./datasets/fafu_demo --dataset-repo-id FAFU-Robotics/fafu_demo --action-mode joint --output-dir ./outputs/train/act_fafu_joint --device cuda --run
-```
-
 未指定 `--device` 时由 LeRobot 自动选择可用设备；CPU 可以用于流水线冒烟测试，但完整视觉 ACT 训练通常应使用 GPU。
 默认值与官方基线接近：100,000 updates、batch 8、action chunk 100。FAFU 入口把 `n_action_steps` 设为 10，表示
 部署时执行 10 帧就重新观察，而不是官方默认的 100 帧；30 Hz 下约每 0.33 秒闭环一次，更适合作为首轮真机设置。
@@ -144,10 +163,11 @@ fafu-arm-train act --dataset-root ./datasets/task_ee_pose --dataset-repo-id FAFU
 
 先只改变一个变量：
 
-1. `joint`，默认 ACT 参数，50 条高质量示范；
-2. 同一配置换 3 个 seed，确认结果不是偶然；
-3. 再比较 `ee_delta` 或 `ee_pose`，不要同时改网络大小、相机和学习率；
-4. 数据质量稳定后才扩大模型或加入数据增强。
+1. 保留 `act_baseline.yaml` 不变，复制为实验 YAML；
+2. `joint`、默认 ACT 参数、至少 50 条高质量示范作为基线；
+3. 同一配置换 3 个 seed，确认结果不是偶然；
+4. 再比较 `ee_delta` 或 `ee_pose`，不要同时改网络大小、相机和学习率；
+5. 数据质量稳定后才扩大模型或加入数据增强。
 
 LeRobot 0.6 可以按 episode 留出离线验证集：
 
@@ -171,10 +191,38 @@ LeRobot 0.6 可以按 episode 留出离线验证集：
 | `policy.kl_weight` | 10 | VAE 重构与多模态行为问题 | 初始不改；修改时同时记录 L1 与 KL 分量 |
 | `policy.dim_model` | 512 | 数据和算力足、确定欠拟合 | 维度必须与 attention heads 合理整除；模型变大不替代好数据 |
 
-高级参数通过 `--set KEY=VALUE` 原样交给 LeRobot，仍保留数据和隐私检查：
+建议按下面四轮推进，每轮只保留表现更好的设置：
+
+1. **数据/控制基线**：固定数据版本、相机、FPS、action mode、任务文本和评估起点；跑 seed 1000/1001/1002。
+2. **优化器**：先比较 `optimizer_lr: 0.00001` 与 `0.00003`。如果 batch 改变，重新比较学习率。
+3. **时间参数**：按任务持续时间比较 `chunk_size: 30/60/100`，再比较 `n_action_steps: 1/5/10/20`；后者不能大于前者。
+4. **容量与正则**：确认欠拟合后再比较 `dim_model: 256/512`、`dropout: 0.1/0.2`；最后才动 `kl_weight: 1/10/20`。
+
+每个实验至少记录：Git commit、YAML、数据集版本或哈希、seed、GPU、训练时长、最优/最后 checkpoint、离线 loss，及固定
+初始条件下的真机成功次数。不要只根据训练 loss 选模型；关注成功率、完成时间、碰撞/越界次数和动作抖动。
+
+### 5.3 为什么使用 YAML
+
+YAML 比一长串命令更适合正式调参：可以 code review、提交版本、复现实验，也能清楚地区分数据、运行、策略、评估、外部
+日志和上传设置。本项目的 YAML schema 会拒绝未知字段，拼错 `chunk_size` 不会静默使用默认值；`policy.extra` 则用于
+自定义 policy 的标量参数。示例：
+
+```yaml
+run:
+  output_dir: ./outputs/train/act_joint_lr3e5_seed1001
+  seed: 1001
+policy:
+  optimizer_lr: 0.00003
+  dropout: 0.2
+```
+
+仓库当前不提供 YAML 继承，避免多层配置合并后不知道最终值。每次实验复制基线文件、给输出目录和文件名加入变量与 seed，
+训练前查看 dry-run 打印的最终命令。
+
+少量临时覆盖仍可用 `--set KEY=VALUE`，并继续保留数据和隐私检查：
 
 ```bash
-fafu-arm-train act --dataset-root ./datasets/fafu_demo --dataset-repo-id FAFU-Robotics/fafu_demo --action-mode joint --output-dir ./outputs/train/act_joint_lr3e5 --device cuda --set policy.optimizer_lr=3e-5 --set policy.dropout=0.2 --run
+fafu-arm-train act --config configs/train/act_baseline.yaml --output-dir ./outputs/train/act_joint_lr3e5 --set policy.optimizer_lr=3e-5 --run
 ```
 
 支持 AMP 的 GPU 可加 `--amp` 降低显存和提高吞吐；第一次先不用，确认基线无 NaN 后再比较。若希望使用 ACT temporal
@@ -239,36 +287,73 @@ lerobot-rollout \
 
 ### 8.1 只改配置，不改模型代码
 
-学习率、chunk、执行步数、dropout、层数、隐藏维度、VAE 和 KL 权重都属于配置实验，使用当前
-`fafu-arm-train act` 参数或 `--set` 即可。先建立不可变基线，不需要 fork LeRobot。
+学习率、chunk、执行步数、dropout、层数、隐藏维度、VAE 和 KL 权重都属于配置实验，直接复制并修改
+`configs/train/act_baseline.yaml`，不需要 fork LeRobot。只有“参数相同但计算图或 loss 要改变”时才写新 policy。
 
-### 8.2 真正修改网络或 loss
+### 8.2 可运行 demo：给 ACT 增加残差 action head
 
-当要增加新输入、改变 encoder/decoder、加入辅助 loss 或改变 action head 时，按 LeRobot 官方的 out-of-tree policy
-plugin 规范创建独立包，建议放在仓库未来的 `policies/` 工作区：
+仓库中的 `lerobot_policy_fafu_act_demo` 继承官方 `ACTPolicy`，保留其视觉编码器、Transformer、VAE、loss、padding 处理和
+processor，只把官方线性 action head 包装为：
 
 ```text
-policies/lerobot_policy_fafu_act/
-├── pyproject.toml                         # distribution 名必须以 lerobot_policy_ 开头
-└── src/lerobot_policy_fafu_act/
-    ├── __init__.py
-    ├── configuration_fafu_act.py          # @register_subclass("fafu_act")
-    ├── modeling_fafu_act.py               # name = "fafu_act"
-    └── processor_fafu_act.py              # make_fafu_act_pre_post_processors
+ACT decoder feature h ── official Linear ───────────────┐
+                      └─ LayerNorm → MLP → × scale ────┼─→ action
+                                                        ┘
 ```
 
-三个名字必须一致，安装后即可使用 `--policy.type=fafu_act`。建议从官方 ACT 的接口而不是旧项目代码开始，并做到：
+核心代码是：
 
-1. 固定并记录所基于的 LeRobot tag/commit，保留上游 Apache-2.0 版权声明；
-2. config 显式校验 action/image/state feature；model 实现 `forward`、`select_action`、`predict_action_chunk`、`reset`；
-3. processor 保持训练归一化与部署反归一化完全对称；
-4. 自定义 loss 正确处理 `action_is_pad`，并分别记录主 loss、辅助 loss 和 KL；
-5. 增加 shape、单步训练、保存/加载、processor round-trip 和真机输出限幅测试；
-6. 用相同数据、seed、steps 和评估起点与官方 ACT 比较，确认修改带来的收益不是数据或配置差异。
+```python
+self.model.action_head = ResidualActionHead(
+    base_head=self.model.action_head,
+    feature_dim=config.dim_model,
+    action_dim=config.action_feature.shape[0],
+    ...,
+)
 
-稳定后在 `training/` 增加 `fafu_act.py` 适配及 CLI 子命令。这样硬件接口不需要改，官方 ACT 基线也始终可用。
+# ResidualActionHead.forward
+return self.base_head(features) + self.residual_scale * self.residual(features)
+```
 
-### 8.3 后续算法
+残差分支最后一层使用零初始化，所以刚创建时输出与官方 head 相同，随后再学习修正。这让“结构修改”可以和官方 ACT 做公平
+对照，但它不代表未训练模型可以安全上真机。
+
+安装 demo（LeRobot 0.6 环境）：
+
+```bash
+python -m pip install -e policies/lerobot_policy_fafu_act_demo
+fafu-arm-train act --config configs/train/fafu_act_demo.yaml
+fafu-arm-train act --config configs/train/fafu_act_demo.yaml --run
+```
+
+LeRobot 会发现名称以 `lerobot_policy_` 开头的已安装 distribution，并根据 `policy.type: fafu_act_demo` 加载它。训练、保存、
+断点续训和 rollout 仍走官方命令。先用相同数据、seed、steps 对比 `act_baseline.yaml`，不要一开始同时改变网络和超参数。
+该 demo 的自有 checkpoint 支持正常保存/加载；它不直接兼容 `policy.type=act` 的 action-head key。若要从官方 ACT
+checkpoint 微调，应写一次显式迁移：复制所有 shape 相同的权重，并把官方 `action_head.weight/bias` 映射到
+`action_head.base_head.weight/bias`，然后记录未加载的残差层；不要使用 `strict=False` 后忽略报告。
+
+### 8.3 修改哪个文件
+
+```text
+policies/lerobot_policy_fafu_act_demo/
+├── pyproject.toml
+└── src/lerobot_policy_fafu_act_demo/
+    ├── configuration_fafu_act_demo.py     # 新参数、默认值和范围校验
+    ├── modeling_fafu_act_demo.py          # 网络层；当前 demo 修改 action head
+    └── processor_fafu_act_demo.py         # 训练归一化和推理反归一化
+```
+
+- **改 action head**：修改 `ResidualActionHead`，同时保持输入最后一维为 `dim_model`、输出最后一维为 action dimension。
+- **加 loss**：在 policy 中覆盖 `forward`；继续屏蔽 `batch["action_is_pad"]`，并分别返回主 loss、KL 和新增 loss 指标。
+- **加状态/图像输入**：先在 config/processor 声明并归一化 feature，再修改模型 token/encoder；不能只在网络里读一个未声明字段。
+- **大改 Transformer/VAE**：不要继续层层 monkey-patch。以固定的 LeRobot 0.6 tag 为基础实现自己的 model 类，保留许可证，
+  但仍复用 `PreTrainedPolicy` 保存/加载契约和 processor 接口。
+
+每个新结构应增加：输出 shape、零/随机输入前向、单步反向、padding loss、保存后加载输出一致、processor round-trip 测试。
+配置类名、模型类名、processor 工厂名和 `policy.type` 必须遵循 LeRobot 的命名约定，否则动态加载会失败。改变参数名称或结构后，
+旧 checkpoint 也可能无法严格加载；此时应升级自定义 policy 版本并明确迁移方式，不要悄悄复用同一类型名。
+
+### 8.4 后续算法
 
 - **LeRobot Diffusion Policy**：优先复用官方 `policy.type=diffusion`，在 `training/diffusion.py` 增加依赖检查、默认参数和
   同一套 dataset preflight。它擅长多模态动作分布，但训练/推理成本通常高于 ACT。

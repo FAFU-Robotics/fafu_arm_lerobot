@@ -230,14 +230,15 @@ lerobot-rollout \
 
 ### ACT 训练
 
-先检查本地数据并打印经过验证的官方 LeRobot ACT 命令；确认后在同一命令末尾增加 `--run`：
+推荐从版本化 YAML 启动。下面先检查本地数据并打印最终官方 LeRobot 命令；确认后增加 `--run`：
 
 ```bash
-fafu-arm-train act --dataset-root ./datasets/fafu_demo --dataset-repo-id FAFU-Robotics/fafu_demo --action-mode joint --output-dir ./outputs/train/act_fafu_joint --device cuda
+fafu-arm-train act --config configs/train/act_baseline.yaml
+fafu-arm-train act --config configs/train/act_baseline.yaml --run
 ```
 
 入口支持 `joint`、`ee_delta` 和 `ee_pose` 三种独立 action schema，默认不上传模型、不启用 W&B。
-动作表示建议、快速训练、调参、断点续训、真机评估和修改 ACT 的方法集中在
+YAML 字段、逐步调参、断点续训、真机评估，以及可直接安装的 ACT 残差 action-head 修改 demo 集中在
 [Policy Training 指南](docs/TRAINING.md)。
 
 ## FK / IK

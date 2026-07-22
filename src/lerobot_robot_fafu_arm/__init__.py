@@ -16,7 +16,7 @@ from .local_dataset import (
     load_episode,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # LeRobot discovers third-party devices by importing distributions whose name
 # starts with ``lerobot_robot_``. Importing the config modules performs the

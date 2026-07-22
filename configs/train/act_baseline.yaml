@@ -1,0 +1,59 @@
+# Reproducible FAFU ACT baseline. Relative paths are resolved from the shell's working directory.
+schema_version: 1
+algorithm: act
+
+dataset:
+  repo_id: FAFU-Robotics/fafu_demo
+  root: ./datasets/fafu_demo
+  action_mode: joint  # joint (recommended baseline), ee_delta, or ee_pose
+
+run:
+  output_dir: ./outputs/train/act_fafu_joint_seed1000
+  device: cuda
+  steps: 100000
+  batch_size: 8
+  num_workers: 4
+  seed: 1000
+  save_freq: 20000
+  log_freq: 200
+
+policy:
+  type: act
+  # Prediction horizon and closed-loop execution interval.
+  chunk_size: 100
+  n_action_steps: 10
+  temporal_ensemble_coeff: null
+  use_amp: false
+
+  # Optimizer. Change one variable at a time and keep the baseline file unchanged.
+  optimizer_lr: 0.00001
+  optimizer_weight_decay: 0.0001
+  optimizer_lr_backbone: 0.00001
+
+  # Transformer and vision backbone.
+  vision_backbone: resnet18
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  dropout: 0.1
+
+  # Conditional VAE used by the official ACT baseline.
+  use_vae: true
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+  kl_weight: 10.0
+
+evaluation:
+  eval_split: 0.1
+  eval_steps: 5000
+
+tracking:
+  wandb: false
+
+hub:
+  push_to_hub: false
+  policy_repo_id: null
+  public: false

@@ -11,40 +11,47 @@ from pathlib import Path
 
 from .act import ActTrainConfig, build_act_command, format_command
 from .common import TRAINING_ACTION_MODES, check_training_dataset, format_training_report
+from .config_file import load_act_yaml
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Preflight and launch LeRobot policies on FAFU datasets")
     subparsers = parser.add_subparsers(dest="algorithm", required=True)
     act = subparsers.add_parser("act", help="Check a dataset and prepare official LeRobot ACT training")
-    act.add_argument("--dataset-root", type=Path, required=True)
-    act.add_argument("--dataset-repo-id", required=True)
-    act.add_argument("--action-mode", choices=TRAINING_ACTION_MODES, required=True)
-    act.add_argument("--output-dir", type=Path, required=True)
+    act.add_argument("--config", type=Path, help="Versioned FAFU training YAML")
+    act.add_argument("--dataset-root", type=Path)
+    act.add_argument("--dataset-repo-id")
+    act.add_argument("--action-mode", choices=TRAINING_ACTION_MODES)
+    act.add_argument("--output-dir", type=Path)
+    act.add_argument("--policy-type", help="LeRobot policy type; defaults to act")
     act.add_argument("--device", help="cuda, cuda:0, mps, or cpu; omit for LeRobot auto-selection")
-    act.add_argument("--steps", type=int, default=100_000)
-    act.add_argument("--batch-size", type=int, default=8)
-    act.add_argument("--num-workers", type=int, default=4)
-    act.add_argument("--seed", type=int, default=1000)
-    act.add_argument("--save-freq", type=int, default=20_000)
-    act.add_argument("--log-freq", type=int, default=200)
-    act.add_argument("--chunk-size", type=int, default=100)
+    act.add_argument("--steps", type=int)
+    act.add_argument("--batch-size", type=int)
+    act.add_argument("--num-workers", type=int)
+    act.add_argument("--seed", type=int)
+    act.add_argument("--save-freq", type=int)
+    act.add_argument("--log-freq", type=int)
+    act.add_argument("--chunk-size", type=int)
     act.add_argument(
         "--n-action-steps",
         type=int,
-        default=10,
         help="Actions executed before observing again; FAFU safety-oriented default: 10",
     )
-    act.add_argument("--eval-split", type=float, default=0.0)
-    act.add_argument("--eval-steps", type=int, default=0)
+    act.add_argument("--eval-split", type=float)
+    act.add_argument("--eval-steps", type=int)
     act.add_argument("--temporal-ensemble-coeff", type=float)
-    act.add_argument("--amp", action="store_true", help="Enable automatic mixed precision")
-    act.add_argument("--wandb", action="store_true", help="Explicitly enable external W&B logging")
-    act.add_argument("--push-to-hub", action="store_true", help="Explicitly upload the trained policy")
+    act.add_argument("--amp", action="store_true", default=None, help="Enable automatic mixed precision")
+    act.add_argument(
+        "--wandb", action="store_true", default=None, help="Explicitly enable external W&B logging"
+    )
+    act.add_argument(
+        "--push-to-hub", action="store_true", default=None, help="Explicitly upload the trained policy"
+    )
     act.add_argument("--policy-repo-id")
     act.add_argument(
         "--public",
         action="store_true",
+        default=None,
         help="Make an uploaded policy public; uploads are private when this flag is absent",
     )
     act.add_argument(
@@ -65,36 +72,51 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = check_training_dataset(args.dataset_root, args.action_mode)
     try:
-        config = ActTrainConfig(
-            dataset_repo_id=args.dataset_repo_id,
-            dataset_root=args.dataset_root,
-            output_dir=args.output_dir,
-            action_mode=args.action_mode,
-            device=args.device,
-            steps=args.steps,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            seed=args.seed,
-            save_freq=args.save_freq,
-            log_freq=args.log_freq,
-            chunk_size=args.chunk_size,
-            n_action_steps=args.n_action_steps,
-            eval_split=args.eval_split,
-            eval_steps=args.eval_steps,
-            temporal_ensemble_coeff=args.temporal_ensemble_coeff,
-            use_amp=args.amp,
-            wandb=args.wandb,
-            push_to_hub=args.push_to_hub,
-            public=args.public,
-            policy_repo_id=args.policy_repo_id,
-            extra_args=tuple(args.set),
-        )
+        values = load_act_yaml(args.config) if args.config else {}
+        cli_fields = {
+            "dataset_repo_id": "dataset_repo_id",
+            "dataset_root": "dataset_root",
+            "output_dir": "output_dir",
+            "action_mode": "action_mode",
+            "policy_type": "policy_type",
+            "device": "device",
+            "steps": "steps",
+            "batch_size": "batch_size",
+            "num_workers": "num_workers",
+            "seed": "seed",
+            "save_freq": "save_freq",
+            "log_freq": "log_freq",
+            "chunk_size": "chunk_size",
+            "n_action_steps": "n_action_steps",
+            "eval_split": "eval_split",
+            "eval_steps": "eval_steps",
+            "temporal_ensemble_coeff": "temporal_ensemble_coeff",
+            "amp": "use_amp",
+            "wandb": "wandb",
+            "push_to_hub": "push_to_hub",
+            "public": "public",
+            "policy_repo_id": "policy_repo_id",
+        }
+        for argument_name, config_name in cli_fields.items():
+            value = getattr(args, argument_name)
+            if value is not None:
+                values[config_name] = value
+        values["extra_args"] = tuple(values.get("extra_args", ())) + tuple(args.set)
+        missing = [
+            name
+            for name in ("dataset_repo_id", "dataset_root", "output_dir", "action_mode")
+            if name not in values
+        ]
+        if missing:
+            flags = ", ".join(f"--{name.replace('_', '-')}" for name in missing)
+            raise ValueError(f"missing training options: {flags}; provide them directly or with --config")
+        config = ActTrainConfig(**values)
         command = build_act_command(config)
     except ValueError as exc:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 2
+    report = check_training_dataset(config.dataset_root, config.action_mode)
 
     if args.as_json:
         if args.run:

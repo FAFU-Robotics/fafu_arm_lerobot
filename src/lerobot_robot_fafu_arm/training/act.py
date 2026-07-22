@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ class ActTrainConfig:
     dataset_root: Path
     output_dir: Path
     action_mode: str
+    policy_type: str = "act"
     device: str | None = None
     steps: int = 100_000
     batch_size: int = 8
@@ -55,6 +57,8 @@ class ActTrainConfig:
     def validate(self) -> None:
         if self.action_mode not in TRAINING_ACTION_MODES:
             raise ValueError("action_mode must be joint, ee_delta, or ee_pose")
+        if re.fullmatch(r"[a-z][a-z0-9_]*", self.policy_type) is None:
+            raise ValueError("policy_type must use lowercase letters, digits, and underscores")
         if not self.dataset_repo_id.strip():
             raise ValueError("dataset_repo_id must not be empty")
         for name in ("steps", "batch_size", "save_freq", "log_freq", "chunk_size", "n_action_steps"):
@@ -95,9 +99,9 @@ def build_act_command(config: ActTrainConfig, executable: str = "lerobot-train")
         executable,
         f"--dataset.repo_id={config.dataset_repo_id}",
         f"--dataset.root={config.dataset_root.expanduser().resolve()}",
-        "--policy.type=act",
+        f"--policy.type={config.policy_type}",
         f"--output_dir={config.output_dir.expanduser().resolve()}",
-        f"--job_name=act_fafu_{config.action_mode}",
+        f"--job_name={config.policy_type}_fafu_{config.action_mode}",
         f"--steps={config.steps}",
         f"--batch_size={config.batch_size}",
         f"--num_workers={config.num_workers}",

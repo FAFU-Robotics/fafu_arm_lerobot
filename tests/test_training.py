@@ -117,6 +117,23 @@ def test_act_command_upload_is_private_unless_explicitly_public(tmp_path):
     assert "--policy.repo_id=FAFU-Robotics/act-demo" in command
 
 
+def test_act_command_supports_out_of_tree_policy(tmp_path):
+    config = ActTrainConfig(
+        dataset_repo_id="FAFU-Robotics/demo",
+        dataset_root=tmp_path / "dataset",
+        output_dir=tmp_path / "output",
+        action_mode="joint",
+        policy_type="fafu_act_demo",
+        extra_args=("policy.residual_hidden_dim=128",),
+    )
+
+    command = build_act_command(config)
+
+    assert "--policy.type=fafu_act_demo" in command
+    assert "--policy.residual_hidden_dim=128" in command
+    assert "--job_name=fafu_act_demo_fafu_joint" in command
+
+
 def test_act_config_rejects_unsafe_or_inconsistent_options(tmp_path):
     base = {
         "dataset_repo_id": "FAFU-Robotics/demo",
@@ -131,6 +148,8 @@ def test_act_config_rejects_unsafe_or_inconsistent_options(tmp_path):
         ActTrainConfig(**base, temporal_ensemble_coeff=0.01).validate()
     with pytest.raises(ValueError, match="dedicated option"):
         ActTrainConfig(**base, extra_args=("policy.push_to_hub=true",)).validate()
+    with pytest.raises(ValueError, match="lowercase"):
+        ActTrainConfig(**base, policy_type="Bad/Policy").validate()
 
 
 def test_training_cli_is_a_dry_run_by_default(tmp_path, capsys):
@@ -154,4 +173,54 @@ def test_training_cli_is_a_dry_run_by_default(tmp_path, capsys):
 
     assert exit_code == 0
     assert "[DRY-RUN]" in capsys.readouterr().out
+    assert not output.exists()
+
+
+def test_training_cli_loads_yaml_and_cli_overrides_it(tmp_path, capsys):
+    dataset = tmp_path / "dataset"
+    output = tmp_path / "output"
+    write_training_dataset(dataset, action_names=joint_names())
+    config_file = tmp_path / "act.yaml"
+    config_file.write_text(
+        f"""
+schema_version: 1
+algorithm: act
+dataset:
+  repo_id: FAFU-Robotics/demo
+  root: {json.dumps(str(dataset))}
+  action_mode: joint
+run:
+  output_dir: {json.dumps(str(output))}
+  steps: 50000
+policy:
+  type: fafu_act_demo
+  chunk_size: 60
+  n_action_steps: 5
+  extra:
+    residual_hidden_dim: 128
+tracking:
+  wandb: false
+hub:
+  push_to_hub: false
+  public: false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "act",
+            "--config",
+            str(config_file),
+            "--steps",
+            "1234",
+        ]
+    )
+
+    output_text = capsys.readouterr().out
+    assert exit_code == 0
+    assert "--policy.type=fafu_act_demo" in output_text
+    assert "--policy.residual_hidden_dim=128" in output_text
+    assert "--steps=1234" in output_text
+    assert "--steps=50000" not in output_text
     assert not output.exists()
