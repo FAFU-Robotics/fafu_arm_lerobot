@@ -1,245 +1,110 @@
 # FAFU Arm × LeRobot
 
-`fafu_arm_lerobot` 是 FAFU 六轴机械臂的 LeRobot 第三方插件，提供数据采集、主从遥操作、
-数据回放、策略评估以及基于 pytracik 的 FK/IK。硬件通信使用
-[fafu_arm_sdk](https://github.com/FAFU-Robotics/fafu_arm_sdk)，运动学模型、控制安全限制和
-LeRobot 设备接口均由本项目直接维护。
+`fafu_arm_lerobot` 是 FAFU 六轴机械臂的 LeRobot 第三方插件。硬件通信由
+[fafu_arm_sdk](https://github.com/FAFU-Robotics/fafu_arm_sdk) 提供，本项目负责 LeRobot 设备接口、
+运动学、动作表示、数据工具和训练入口。
 
-## 已实现
+## 功能
 
-- `fafu_follower`：LeRobot `Robot`，支持 6 关节 + 夹爪、相机、动作限幅和 30 Hz 流式控制。
-- `fafu_leader`：LeRobot `Teleoperator`，释放电机后读取人工拖动的关节和夹爪位置。
-- 动作支持关节角、绝对 EE 位姿、EE 增量和同步归档四种模式。
-- 默认观测同时保留关节位置/速度、绝对 EE 位姿和相邻帧 EE 增量。
-- `FafuArmKinematics`：使用 [pytracik](https://pypi.org/project/pytracik/) 完成 FK/IK。
-- `fafu-arm-train`：ACT 数据预检、隐私安全的训练命令和官方 LeRobot 训练入口。
-- LeRobot 0.4.3–0.6.x 第三方插件自动发现，无需修改 `lerobot` 包。
-- Windows 和 Ubuntu SDK 构建流程、离线软件检查、无动作硬件连通检查。
+- `fafu_follower`：6 关节 + 夹爪、相机、动作限幅和流式控制。
+- `fafu_leader`：读取人工拖动产生的关节与夹爪目标，用于主从遥操作。
+- action：`joint`、`ee_pose`、`ee_delta` 和归档用 `all`。
+- observation：可同时保存关节位置/速度、绝对 EE 位姿、相邻帧 EE 增量和相机图像。
+- `FafuArmKinematics`：使用 pytracik 完成 FK/IK。
+- `fafu-arm-dataset`、`fafu-arm-wrs-view`：检查、读取、导出和查看本地数据。
+- `fafu-arm-train`：ACT 数据预检、YAML 配置和官方 LeRobot 训练入口。
 
-## URDF 与 TCP
+## 推荐运行档案
 
-`src/lerobot_robot_fafu_arm/resources/fafu_arm.urdf` 是只包含运动学链的可部署 URDF：
+| 用途 | Python | LeRobot | FAFU SDK |
+|---|---|---|---|
+| 完整采集、ACT 训练与 rollout（推荐） | 3.12 | 0.6.x；复现基线固定为 0.6.0 | 用同一 Python 重新编译 |
+| 复用已有 Windows `cp310` SDK | 3.10 | 0.4.3 | 可使用匹配 ABI 的已有二进制 |
 
-- 六个关节的 origin、axis 和 limit 按 FAFU Arm 的机械尺寸与 `fafu_follower.urdf`
-  维护。
-- `tool_link` 从 `link6` 沿 URDF X 轴偏移 **0.175 m**。
-- 175 mm 来自当前夹爪代码中的 5 mm coupling + 170 mm acting center；相较原
-  `fafu_follower.urdf` 的 165 mm，TCP 向前更新了 10 mm。
+不要混用不同 Python ABI 生成的 `fafu_motor`。完整版本说明、平台构建和验收步骤见
+[部署指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DEPLOYMENT.md)。
 
-详细推导见 [docs/URDF.md](docs/URDF.md)。
+## 最短安装路径
 
-## 兼容环境
-
-| Python | LeRobot | FAFU SDK |
-|---|---|---|
-| 3.10 / 3.11 | 0.4.3 系列 | Windows 可直接使用匹配 ABI 的现有 `.pyd`，否则重编 |
-| 3.12 / 3.13 | 0.5.x / 0.6.x | 需要为当前 Python 重编 `fafu_motor` |
-
-推荐第一次部署使用 Python 3.10。无论使用哪个版本，`fafu_motor.cpXY...` 的 `XY` 必须和
-当前 Python ABI 一致。
-
-## 安装
+获取包含 SDK submodule 的完整仓库：
 
 ```bash
 git clone --recurse-submodules https://github.com/FAFU-Robotics/fafu_arm_lerobot.git
 cd fafu_arm_lerobot
-python -m venv .venv
 ```
 
-激活虚拟环境后安装插件：
+创建并激活 Python 3.12 环境：
+
+```powershell
+# Windows PowerShell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+```bash
+# Ubuntu
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+
+安装固定基线和本项目：
 
 ```bash
 python -m pip install --upgrade pip
+python -m pip install "lerobot[core-scripts]==0.6.0"
 python -m pip install -e .
 ```
 
-如果第一次 clone 时没有拉 submodule：
-
-```bash
-git submodule update --init --recursive
-```
-
-### 编译 FAFU SDK（Windows）
-
-在已经激活的 Python 环境中：
-
-```powershell
-python -m pip install pybind11
-cd third_party/fafu_arm_sdk/fafu_robot_cpp
-./build.bat
-cd ../../..
-```
-
-脚本会把匹配当前 Python ABI 的 `fafu_motor` 和 `serial_cmake.dll` 复制到
-`third_party/fafu_arm_sdk/fafu_robot_python/`。
-
-### 编译 FAFU SDK（Ubuntu）
-
-```bash
-cd third_party/fafu_arm_sdk/fafu_robot_cpp
-bash linux/install_deps.sh
-bash linux/setup_udev.sh
-bash linux/build.sh
-cd ../../..
-```
-
-完整系统配置和故障排查见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
-
-## 部署前检查
-
-只检查软件、URDF、pytracik 和 SDK 导入，不会打开串口：
+然后按[部署指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DEPLOYMENT.md)为当前 Python 构建 FAFU SDK，再执行：
 
 ```bash
 fafu-arm-check
 ```
 
-打开串口并读取一次状态，但不使能电机、不发送运动指令：
+通过标准：输出包含 `[OK] URDF / pytracik`、`[OK] FAFU SDK` 和
+`[OK] software checks passed`；此命令不会打开串口。
+
+## 第一次连接
+
+先确认 follower 的实际端口。Ubuntu 主从设备统一使用稳定且彼此不同的
+`/dev/serial/by-id/...` 路径，不使用 `/dev/ttyUSB0` 的枚举顺序：
 
 ```bash
+ls -l /dev/serial/by-id/
+fafu-arm-check --connect --port /dev/serial/by-id/FOLLOWER_DEVICE
+```
+
+Windows 使用设备管理器确认端口后运行：
+
+```powershell
 fafu-arm-check --connect --port COM14
-# Ubuntu: fafu-arm-check --connect --port /dev/fafu_debug_board
 ```
 
-也可让插件查找外部 SDK，而不使用 submodule：
+`--connect` 只读一次状态，不使能电机、不发送运动命令。看到
+`[OK] hardware check passed; no motion command was sent` 后，才进入小步遥操作、相机和采集验收。
 
-```bash
-# Windows PowerShell
-$env:FAFU_ARM_SDK_PATH = "D:\code\fafu_arm_sdk"
+## 数据与训练
 
-# Linux / macOS
-export FAFU_ARM_SDK_PATH=/opt/fafu_arm_sdk
-```
+完整的数据采集命令只在 [Data Collection 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DATA_COLLECTION.md)维护，包括：
 
-串口发现、双相机配置、本地录制、数据保存/读取、LeRobot 与 WRS 查看、安全回放和故障恢复的
-完整流程见 [Data Collection 指南](docs/DATA_COLLECTION.md)。
+- follower/leader 串口与相机配置；
+- `joint`、`ee_delta`、`ee_pose`、`all` 的字段和适用范围；
+- 本地录制、续录、读取、数据检查、LeRobot/WRS 查看和安全回放；
+- 故障恢复与数据集发布。
 
-## LeRobot 使用
+首次采集必须显式设置 `--dataset.push_to_hub=false`。确认相机画面和元数据可发布后，使用
+`--dataset.push_to_hub=true --dataset.private=true`；只有明确需要公开时才设置
+`--dataset.private=false`。
 
-### 主从遥操作
-
-两台机械臂需要使用不同串口：
-
-```bash
-lerobot-teleoperate \
-  --robot.type=fafu_follower \
-  --robot.id=fafu_follower \
-  --robot.port=/dev/ttyUSB0 \
-  --teleop.type=fafu_leader \
-  --teleop.id=fafu_leader \
-  --teleop.port=/dev/ttyUSB1
-```
-
-### 数据采集
-
-```bash
-lerobot-record \
-  --robot.type=fafu_follower \
-  --robot.id=fafu_follower \
-  --robot.port=/dev/ttyUSB0 \
-  --robot.action_mode=joint \
-  --robot.observation_mode=all \
-  --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-  --teleop.type=fafu_leader \
-  --teleop.id=fafu_leader \
-  --teleop.port=/dev/ttyUSB1 \
-  --teleop.action_mode=joint \
-  --dataset.repo_id=FAFU-Robotics/fafu_demo \
-  --dataset.root=./datasets/fafu_demo \
-  --dataset.single_task="pick and place" \
-  --dataset.num_episodes=20 \
-  --dataset.episode_time_s=30 \
-  --dataset.push_to_hub=false
-```
-
-相机使用 LeRobot 标准 camera config 传给 `--robot.cameras`。默认的 `observation_mode=all`
-会同时记录关节位置/速度、绝对 EE 位姿、相邻帧 EE 增量和夹爪状态；action 默认是关节目标。
-
-> 隐私默认：LeRobot 当前 `push_to_hub` 默认值为 `true`，因此本项目所有首次采集示例都
-> 明确使用 `--dataset.push_to_hub=false`。确认相机画面和元数据不含实验室敏感信息后，发布时必须
-> 显式设置 `--dataset.push_to_hub=true --dataset.private=true`；只有确实要公开时才改为
-> `--dataset.private=false`。
-
-`action_mode` 可在 `joint`、`ee_pose`、`ee_delta`、`all` 中选择，robot 与 teleop 必须一致。
-通常应在一个训练数据集中选择一种 action 表示；`all` 适合归档后再筛选，不建议直接让策略同时学习
-三套冗余动作。字段、单位、推荐配置、pytracik 适用范围以及完整数据生命周期见
-[Data Collection 指南](docs/DATA_COLLECTION.md)。
-
-默认严格要求每帧 action 字段完整且没有未知字段，并在安全裁剪成功后将最终下发值写回动作字典。
-因此 LeRobot 默认录制流水线保存的是限幅后的命令，不是 leader 的越界请求值。
-
-### 读取、导出和查看
-
-录制结束后，不连接机械臂即可检查和预览本地数据：
-
-```bash
-fafu-arm-dataset info --root ./datasets/fafu_demo
-fafu-arm-dataset check --root ./datasets/fafu_demo --action-mode joint --episode 0
-fafu-arm-dataset preview --root ./datasets/fafu_demo --episode 0 --rows 3
-fafu-arm-dataset export --root ./datasets/fafu_demo --episode 0 --output ./exports/episode_000.csv
-```
-
-相机、状态和动作同步查看使用 LeRobot 官方 `lerobot-dataset-viz`。机械臂骨架和 TCP 三维轨迹可在
-WRS 中播放；先用 `--dry-run` 只校验数据：
-
-```bash
-fafu-arm-wrs-view --root ./datasets/fafu_demo --episode 0 --source observation --dry-run
-fafu-arm-wrs-view --root ./datasets/fafu_demo --episode 0 --wrs-path /path/to/wrs
-```
-
-Python 读取 API、CSV 规则、WRS 参数和数据目录说明见 [Data Collection 指南](docs/DATA_COLLECTION.md)。
-
-### 回放
-
-先在不连接机械臂的情况下核对字段、action mode 和 episode：
-
-```bash
-fafu-arm-dataset-check --root ./datasets/fafu_demo --action-mode joint --episode 0
-```
-
-```bash
-lerobot-replay \
-  --robot.type=fafu_follower \
-  --robot.id=fafu_follower \
-  --robot.port=/dev/ttyUSB0 \
-  --robot.action_mode=joint \
-  --robot.max_relative_target=0.03 \
-  --dataset.repo_id=FAFU-Robotics/fafu_demo \
-  --dataset.root=./datasets/fafu_demo \
-  --dataset.episode=0
-```
-
-回放使用的 `robot.action_mode` 必须与数据集 action 字段一致。完整回放检查清单见
-[Data Collection 指南](docs/DATA_COLLECTION.md#7-回放前校验和低速回放)。
-
-### 策略评估/采集 rollout
-
-```bash
-lerobot-rollout \
-  --strategy.type=base \
-  --robot.type=fafu_follower \
-  --robot.id=fafu_follower \
-  --robot.port=/dev/ttyUSB0 \
-  --robot.action_mode=joint \
-  --policy.path=outputs/train/fafu_act/checkpoints/last/pretrained_model \
-  --task="evaluate pick and place" \
-  --duration=60
-```
-
-上面是 LeRobot 0.6 的只运行策略示例。需要保存 rollout 时应再次明确设置本地数据目录、
-`--dataset.push_to_hub=false`，或在确实发布时使用 `--dataset.private=true`。
-
-### ACT 训练
-
-推荐从版本化 YAML 启动。下面先检查本地数据并打印最终官方 LeRobot 命令；确认后增加 `--run`：
+ACT 训练从版本化 YAML 启动。第一条命令只检查数据并打印最终 LeRobot 命令，第二条才开始训练：
 
 ```bash
 fafu-arm-train act --config configs/train/act_baseline.yaml
 fafu-arm-train act --config configs/train/act_baseline.yaml --run
 ```
 
-入口支持 `joint`、`ee_delta` 和 `ee_pose` 三种独立 action schema，默认不上传模型、不启用 W&B。
-YAML 字段、逐步调参、断点续训、真机评估，以及可直接安装的 ACT 残差 action-head 修改 demo 集中在
-[Policy Training 指南](docs/TRAINING.md)。
+action 表示选择、调参、断点续训、策略评估及 ACT 网络修改 demo 见
+[Policy Training 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/TRAINING.md)。
 
 ## FK / IK
 
@@ -250,58 +115,36 @@ from lerobot_robot_fafu_arm import FafuArmKinematics
 kin = FafuArmKinematics()
 q = np.array([0.0, 0.5, 1.0, 0.0, 0.0, 0.0])
 pose = kin.forward(q)
+solution = kin.inverse(position=pose.position, rotation=pose.rotation, seed=q)
 
-solution = kin.inverse(
-    position=pose.position,
-    rotation=pose.rotation,
-    seed=q,
-)
 if solution is None:
     raise RuntimeError("target is unreachable")
 ```
 
-自定义 URDF 或 TCP：
+自定义模型可传入 URDF 路径：
 
 ```python
 kin = FafuArmKinematics("/path/to/custom_fafu.urdf")
 ```
 
-LeRobot CLI 中可传 `--robot.urdf_path=/path/to/custom_fafu.urdf`。
+TCP、关节轴和模型替换方法见 [URDF 说明](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/URDF.md)。
 
-## 关键配置
+## 文档导航
 
-| 参数 | 默认值 | 作用 |
-|---|---:|---|
-| `robot.action_mode` | `joint` | 数据集 action 与控制表示；也可选 `ee_pose`、`ee_delta`、`all` |
-| `teleop.action_mode` | `joint` | leader 输出表示，必须与 robot 一致 |
-| `robot.observation_mode` | `all` | 同时保存关节、绝对 EE 与 EE 增量状态 |
-| `robot.record_joint_velocity` | `true` | 保存 SDK 关节/夹爪速度 |
-| `robot.record_motor_effort` | `false` | 保存未标定的 SDK torque raw 值 |
-| `robot.max_ee_translation_step_m` | `0.03` m | 每帧最大 TCP 平移 |
-| `robot.max_ee_rotation_step_rad` | `0.20` rad | 每帧最大 TCP 转角 |
-| `robot.use_servo` | `true` | 使用 SDK `servo_j` 连续控制 |
-| `robot.servo_watchdog_ms` | `250` | 主机失联时固件刹车超时 |
-| `robot.servo_use_mit` | `false` | 默认走稳定的位置通道；调好动力学后可启用 MIT |
-| `robot.max_relative_target` | `0.15` rad | 每帧最大关节目标变化 |
-| `robot.enforce_urdf_limits` | `true` | 在 SDK 软限位之前再做一次 URDF 限幅 |
-| `robot.strict_action_features` | `true` | 缺字段、未知字段或非有限数值时整帧拒绝，不发送运动命令 |
-| `robot.write_sent_action_back` | `true` | 将安全限幅后的动作原地写回，供默认 LeRobot recorder 保存 |
-| `robot.gripper_effort` | `300` raw | 夹爪最大力矩上限 |
-| `robot.joint_release` | `stop` | 断开后关节释放策略 |
-| `robot.gripper_release` | `brake` | 断开后夹爪短路制动，减少掉落风险 |
+| 目标 | 文档 |
+|---|---|
+| 选择版本、构建 SDK、端口分配和分阶段验收 | [部署指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DEPLOYMENT.md) |
+| 采集、保存、读取、查看、发布、回放和恢复 | [Data Collection 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/DATA_COLLECTION.md) |
+| ACT 训练、调参、评估和网络修改 | [Policy Training 指南](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/TRAINING.md) |
+| URDF、TCP 和坐标轴 | [URDF 说明](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/docs/URDF.md) |
 
-如需修改 SDK 电机软限位，请复制包内 `fafu_arm.cfg` 后通过
-`--robot.sdk_config_path=/path/to/robot.cfg` 使用，不要直接修改 site-packages。
+## 安全要求
 
-## 安全
-
-- 第一次连接先运行 SDK 的 `01_smoke` 或 `fafu-arm-check --connect`。
-- 上真机前确认急停可用、工作空间内无人、机械臂下方有支撑。
-- 先用低速和小 `max_relative_target` 验证关节方向，再采集数据或运行策略。
-- `fafu_leader` 会释放关节；未托住重力轴时机械臂可能下落。
-- 未经实机标定不要修改 TCP、关节方向、软限位或开启 MIT 控制。
-- 当前 EE 已经位于配置的工作空间之外时，笛卡尔动作会被拒绝；先人工确认零位/TCP 后低速恢复。
-- 动作字段或数值校验失败时不要关闭严格校验，应修复 teleop、策略或数据集字段。
+- 上电前确认急停可用、工作空间内无人，并托住可能因释放而下落的重力轴。
+- 首次运动使用 `robot.max_relative_target=0.03`，逐关节核对方向、软限位和释放行为。
+- 未经实机标定，不修改 TCP、关节方向、SDK 软限位或启用 MIT 控制。
+- 保持严格 action 字段校验、限幅和 servo watchdog；校验失败时修复输入，不绕过保护。
+- 真机回放和策略评估前执行 Data Collection 指南中的预检，并从低速短时运行开始。
 
 ## 开发验证
 
@@ -314,4 +157,4 @@ python -m build
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/FAFU-Robotics/fafu_arm_lerobot/blob/main/LICENSE)
