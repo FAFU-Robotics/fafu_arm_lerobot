@@ -142,7 +142,10 @@ class FafuFollower(Robot):
             max_vel=self.config.servo_max_velocity,
             max_step_rad=self.config.servo_max_step_rad,
             max_lag_rad=self.config.servo_max_lag_rad,
+            is_radians=True,
             rate_hz=self.config.servo_rate_hz,
+            feedforward_vel=self.config.servo_feedforward_vel,
+            lag_abort_consecutive=self.config.servo_lag_abort_consecutive,
             use_mit=self.config.servo_use_mit,
         )
         controller.servo_start(options)

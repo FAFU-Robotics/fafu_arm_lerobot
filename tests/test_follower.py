@@ -95,7 +95,10 @@ class FakeServoOptions:
     max_vel: float
     max_step_rad: float
     max_lag_rad: float
+    is_radians: bool
     rate_hz: float
+    feedforward_vel: bool
+    lag_abort_consecutive: int
     use_mit: bool
 
 
@@ -175,6 +178,9 @@ def test_follower_clips_and_streams_actions(monkeypatch, tmp_path):
     robot.connect()
     requested = joint_action_values(joint1=1.0, gripper=1.0)
     sent = robot.send_action(requested)
+    assert controller.options.is_radians is True
+    assert controller.options.feedforward_vel is False
+    assert controller.options.lag_abort_consecutive == 5
 
     assert math.isclose(controller.last_servo[0], 0.15)
     assert np.all(controller.last_servo <= 0.5)
@@ -387,6 +393,10 @@ def test_follower_config_rejects_unsafe_numeric_values(monkeypatch, tmp_path):
         ({"max_relative_target": True}, "max_relative_target"),
         ({"max_relative_target": float("nan")}, "max_relative_target"),
         ({"max_relative_target": 0.501}, "max_relative_target"),
+        ({"servo_feedforward_vel": 1}, "servo_feedforward_vel"),
+        ({"servo_lag_abort_consecutive": False}, "servo_lag_abort_consecutive"),
+        ({"servo_lag_abort_consecutive": -1}, "servo_lag_abort_consecutive"),
+        ({"servo_lag_abort_consecutive": 101}, "servo_lag_abort_consecutive"),
         ({"max_relative_target": {}}, "max_relative_target"),
         ({"max_relative_target": {"joint1": False}}, "max_relative_target"),
         ({"max_relative_target": {"joint1": float("inf")}}, "max_relative_target"),

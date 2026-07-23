@@ -177,10 +177,12 @@ fafu-arm-check --connect --port /dev/serial/by-id/FOLLOWER_DEVICE
 
 ```bash
 lerobot-teleoperate \
+  --fps=30 \
   --robot.type=fafu_follower \
   --robot.id=fafu_follower \
   --robot.port=/dev/serial/by-id/FOLLOWER_DEVICE \
   --robot.action_mode=joint \
+  --robot.servo_rate_hz=30 \
   --robot.max_relative_target=0.03 \
   --teleop.type=fafu_leader \
   --teleop.id=fafu_leader \

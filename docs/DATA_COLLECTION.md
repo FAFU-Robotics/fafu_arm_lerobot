@@ -165,8 +165,9 @@ lerobot-record \
   --robot.port=/dev/serial/by-id/<follower-device> \
   --robot.action_mode=joint \
   --robot.observation_mode=all \
+  --robot.servo_rate_hz=30 \
   --robot.max_relative_target=0.03 \
-  --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+  --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30, fourcc: MJPG}}" \
   --teleop.type=fafu_leader \
   --teleop.id=fafu_leader \
   --teleop.port=/dev/serial/by-id/<leader-device> \

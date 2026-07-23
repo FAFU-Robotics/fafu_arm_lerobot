@@ -31,6 +31,7 @@ _MAX_SERVO_STEP_RAD = 0.5
 _MAX_SERVO_LAG_RAD = 1.0
 _MIN_SERVO_RATE_HZ = 10.0
 _MAX_SERVO_RATE_HZ = 200.0
+_MAX_SERVO_LAG_ABORT_CONSECUTIVE = 100
 _MAX_RELATIVE_TARGET_RAD = 0.5
 _MAX_GRIPPER_EFFORT = 32_767
 
@@ -79,6 +80,8 @@ class FafuFollowerConfig(RobotConfig):
     servo_max_step_rad: float = 0.10
     servo_max_lag_rad: float = 0.35
     servo_rate_hz: float = 30.0
+    servo_feedforward_vel: bool = False
+    servo_lag_abort_consecutive: int = 5
     servo_use_mit: bool = False
 
     move_speed: int = 50
@@ -158,6 +161,17 @@ class FafuFollowerConfig(RobotConfig):
         servo_rate = _finite_number(self.servo_rate_hz, "servo_rate_hz")
         if not _MIN_SERVO_RATE_HZ <= servo_rate <= _MAX_SERVO_RATE_HZ:
             raise ValueError(f"servo_rate_hz must be in [{_MIN_SERVO_RATE_HZ}, {_MAX_SERVO_RATE_HZ}]")
+        if not isinstance(self.servo_feedforward_vel, bool):
+            raise ValueError("servo_feedforward_vel must be a boolean")
+        if isinstance(self.servo_lag_abort_consecutive, bool) or not isinstance(
+            self.servo_lag_abort_consecutive, Integral
+        ):
+            raise ValueError("servo_lag_abort_consecutive must be an integer")
+        if not 0 <= self.servo_lag_abort_consecutive <= _MAX_SERVO_LAG_ABORT_CONSECUTIVE:
+            raise ValueError(
+                "servo_lag_abort_consecutive must be in "
+                f"[0, {_MAX_SERVO_LAG_ABORT_CONSECUTIVE}]"
+            )
 
         if self.max_relative_target is not None:
             if isinstance(self.max_relative_target, dict):

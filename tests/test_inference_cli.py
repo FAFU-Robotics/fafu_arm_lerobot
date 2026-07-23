@@ -69,6 +69,7 @@ def test_example_camera_config_decodes_with_lerobot():
     assert cameras["front"].width == 640
     assert cameras["front"].height == 480
     assert cameras["front"].fps == 30
+    assert cameras["front"].fourcc == "MJPG"
 
 
 def test_hardware_run_requires_port_and_cartesian_workspace():
